@@ -25,7 +25,9 @@ Para un uso habitual con datos fiscales, sitúa un proxy HTTPS delante de web y 
 
 Las funciones principales funcionan sin Internet una vez descargadas las imágenes/dependencias e instalado el idioma OCR. PWA no significa que se puedan guardar partes desconectados: la pantalla sin conexión avisa y no afirma que se hayan guardado cambios.
 
-## Alta de técnicos
+## Alta de técnicos y usuarios
+
+Lo habitual es hacerlo desde la aplicación: **Configuración → Usuarios y accesos** (solo el responsable). Allí puede crear técnicos o responsables con una contraseña inicial generada, dar acceso a un trabajador que ya estaba en «Equipo y coste laboral», cambiar contraseñas (cierra sus sesiones) y desactivar o reactivar cuentas sin borrar sus datos. No puede desactivarse a sí mismo. La consola sigue disponible como alternativa:
 
 ```sh
 docker compose exec -e ADMIN_EMAIL=tecnico@empresa.es -e ADMIN_PASSWORD='OTRA_CONTRASEÑA_LARGA' -e ADMIN_NAME='Nombre del técnico' -e WORKER_HOURLY_COST=25.50 web npm run bootstrap -- --technician

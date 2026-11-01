@@ -6,6 +6,7 @@ import * as v from "./validation";
 import { cents, dec, lineNet, documentLineNet, quotePrice, sum } from "./money";
 import { inventoryOperation } from "./inventory";
 import { purchaseOrderOperation } from "./purchase-orders";
+import { userOperation } from "./users";
 
 type Tx = Prisma.TransactionClient;
 const audit = (tx: Tx, u: Actor, action: string, entityId: string) =>
@@ -35,6 +36,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
   if (action.startsWith("stock-")) return inventoryOperation(u, action, input);
   if (action.startsWith("order-"))
     return purchaseOrderOperation(u, action, input);
+  if (action.startsWith("user-")) return userOperation(u, action, input);
   if (
     ["customer", "supplier", "customerUpdate", "supplierUpdate"].includes(
       action,

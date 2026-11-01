@@ -88,6 +88,7 @@ export async function getState(u: Actor) {
     workers,
     overheads,
     audits,
+    users,
   ] = await Promise.all([
     db.company.findUniqueOrThrow({ where: { id: companyId } }),
     db.job.findMany({
@@ -126,6 +127,18 @@ export async function getState(u: Actor) {
       where: { companyId },
       orderBy: { createdAt: "desc" },
       take: 40,
+    }),
+    db.user.findMany({
+      where: { companyId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        active: true,
+        worker: { select: { id: true } },
+      },
+      orderBy: { name: "asc" },
     }),
   ]);
   const result = jobs.map((j) => {
@@ -185,5 +198,6 @@ export async function getState(u: Actor) {
     sales: jobs.flatMap((j) => j.sales.map((s) => ({ ...s, jobName: j.name }))),
     overheads,
     audits,
+    users: users.map(({ worker, ...x }) => ({ ...x, workerId: worker?.id })),
   };
 }

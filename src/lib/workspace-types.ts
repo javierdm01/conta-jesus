@@ -133,4 +133,12 @@ export type State = {
     date: string;
   }[];
   audits: { id: string; action: string; createdAt: string }[];
+  users?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    active: boolean;
+    workerId?: string;
+  }[];
 };

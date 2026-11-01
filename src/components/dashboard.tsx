@@ -205,6 +205,13 @@ function Panel({
     </section>
   );
 }
+// Contraseña inicial legible: sin caracteres ambiguos (0/O, 1/l/I).
+const randomPassword = () => {
+  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) =>
+    chars[n % chars.length],
+  ).join("");
+};
 async function request(url: string, body: unknown) {
   const res = await fetch(url, {
     method: "POST",
@@ -536,6 +543,71 @@ export function Dashboard({
         field("specialty", "Especialidad", "text", w.specialty ?? "", false),
       ],
     });
+  // Alta de acceso: nuevo técnico/responsable, o acceso para un trabajador ya creado.
+  const createUser = (w?: Worker) =>
+    setModal({
+      title: w ? `Dar acceso a ${w.name}` : "Nuevo usuario",
+      action: "user-create",
+      fixed: w ? { workerId: w.id, role: "TECHNICIAN" } : undefined,
+      fields: [
+        field("name", "Nombre", "text", w?.name),
+        field("email", "Correo electrónico (será su usuario)", "email"),
+        {
+          ...field("password", "Contraseña inicial", "text", randomPassword()),
+          hint: "Cópiala y entrégasela. Es la única vez que la verás; después puedes cambiarla desde su ficha.",
+        },
+        ...(w
+          ? []
+          : [
+              select("role", "Tipo de acceso", [
+                { value: "TECHNICIAN", label: "Técnico (solo sus trabajos)" },
+                { value: "ADMIN", label: "Responsable (acceso completo)" },
+              ]),
+              {
+                ...field(
+                  "hourlyCost",
+                  "Coste laboral real por hora (€)",
+                  "number",
+                  "",
+                  false,
+                ),
+                hint: "Obligatorio para técnicos. No se usa en responsables.",
+              },
+              field("specialty", "Especialidad", "text", "", false),
+            ]),
+      ],
+    });
+  const resetUserPassword = (x: { id: string; name: string }) =>
+    setModal({
+      title: `Nueva contraseña para ${x.name}`,
+      action: "user-password",
+      fixed: { id: x.id },
+      fields: [
+        {
+          ...field("password", "Nueva contraseña", "text", randomPassword()),
+          hint: "Se cerrarán sus sesiones abiertas. Cópiala antes de guardar.",
+        },
+      ],
+    });
+  const setUserActive = async (
+    x: { id: string; name: string },
+    active: boolean,
+  ) => {
+    if (
+      !active &&
+      !window.confirm(
+        `¿Desactivar a ${x.name}? Dejará de poder entrar; sus datos se conservan.`,
+      )
+    )
+      return;
+    try {
+      await request("/api/operations/user-active", { id: x.id, active });
+      setToast(active ? "Usuario reactivado." : "Usuario desactivado.");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
   const createCost = () =>
     setModal({
       title: "Añadir material o gasto",
@@ -2172,8 +2244,8 @@ export function Dashboard({
                 }
               >
                 <p className="small-note px-6 pb-5">
-                  Servidor local · PostgreSQL · OCR Tesseract · las cuentas se
-                  gestionan desde la consola de instalación.
+                  Servidor local · PostgreSQL · OCR Tesseract. Las cuentas de tu
+                  equipo se gestionan en «Usuarios y accesos».
                 </p>
               </Panel>
               <div className="two-col">
@@ -2325,6 +2397,14 @@ export function Dashboard({
                               >
                                 Editar
                               </button>
+                              {!s.users?.some((x) => x.workerId === w.id) && (
+                                <button
+                                  className="text-button block mt-2 ml-auto"
+                                  onClick={() => createUser(w)}
+                                >
+                                  Dar acceso
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -2332,9 +2412,57 @@ export function Dashboard({
                     ) : (
                       <Empty
                         title="Añade a tu equipo"
-                        description="Configura el coste por hora para calcular la mano de obra. El acceso del técnico se crea desde la consola."
+                        description="Configura el coste por hora para calcular la mano de obra. Para que entre en la aplicación, créale un acceso en «Usuarios y accesos»."
                       />
                     )}
+                  </Panel>
+                  <Panel
+                    title="Usuarios y accesos"
+                    subtitle="Quién puede entrar en la aplicación"
+                    action={
+                      <button
+                        className="text-button"
+                        onClick={() => createUser()}
+                      >
+                        + Nuevo usuario
+                      </button>
+                    }
+                  >
+                    <div className="record-list">
+                      {(s.users ?? []).map((x) => (
+                        <div className="record" key={x.id}>
+                          <div>
+                            <strong>{x.name}</strong>
+                            <small>{x.email}</small>
+                            <span
+                              className={`pill ${x.active ? (x.role === "ADMIN" ? "blue" : "green") : "orange"}`}
+                            >
+                              {x.active
+                                ? x.role === "ADMIN"
+                                  ? "Responsable"
+                                  : "Técnico"
+                                : "Desactivado"}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <button
+                              className="text-button block ml-auto"
+                              onClick={() => resetUserPassword(x)}
+                            >
+                              Cambiar contraseña
+                            </button>
+                            {x.id !== s.user.id && (
+                              <button
+                                className="text-button block mt-2 ml-auto"
+                                onClick={() => setUserActive(x, !x.active)}
+                              >
+                                {x.active ? "Desactivar" : "Reactivar"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </Panel>
                   <Panel
                     title="Registro de cambios"

@@ -21,5 +21,19 @@ export const auth = betterAuth({
     customRules: { "/sign-in/email": { window: 60, max: 5 } },
   },
   session: { expiresIn: 60 * 60 * 12, updateAge: 60 * 60 },
+  databaseHooks: {
+    session: {
+      create: {
+        // Una cuenta desactivada no puede abrir sesión nueva.
+        before: async (session) => {
+          const user = await db.user.findUnique({
+            where: { id: session.userId },
+            select: { active: true },
+          });
+          if (user && !user.active) return false;
+        },
+      },
+    },
+  },
   plugins: [nextCookies()],
 });

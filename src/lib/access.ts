@@ -19,6 +19,8 @@ export async function currentUser() {
   });
   if (!user?.companyId)
     throw new AppError("Usuario sin empresa asignada.", 403);
+  if (!user.active)
+    throw new AppError("Esta cuenta está desactivada. Consulta con el responsable.", 403);
   return { ...user, companyId: user.companyId };
 }
 export type Actor = Awaited<ReturnType<typeof currentUser>>;
