@@ -1,0 +1,58 @@
+{
+  "name": "instala-gestion",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0 --port 3001",
+    "build": "prisma generate && next build",
+    "start": "next start --hostname 0.0.0.0",
+    "worker": "node --env-file-if-exists=.env --import tsx worker/index.ts",
+    "db:migrate": "prisma migrate deploy",
+    "bootstrap": "node --env-file-if-exists=.env --import tsx scripts/bootstrap.ts",
+    "reset-password": "node --env-file-if-exists=.env --import tsx scripts/reset-password.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:integration": "node --env-file-if-exists=.env --import tsx tests/integration.ts",
+    "test:quarters": "node --env-file-if-exists=.env --import tsx tests/quarters-integration.ts",
+    "test:inventory": "node --env-file-if-exists=.env --import tsx tests/inventory-integration.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "@radix-ui/react-dialog": "1.1.15",
+    "@radix-ui/react-slot": "1.2.4",
+    "@zxing/browser": "^0.1.5",
+    "@zxing/library": "^0.21.3",
+    "better-auth": "1.7.10",
+    "bwip-js": "^4.11.4",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "decimal.js": "10.6.0",
+    "lucide-react": "0.577.0",
+    "next": "16.4.2",
+    "prisma": "6.19.3",
+    "qrcode": "^1.5.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "3.8.0",
+    "sharp": "0.35.5",
+    "swr": "^2.5.1",
+    "tailwind-merge": "3.5.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.15",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "prisma": "6.19.3",
+    "tailwindcss": "4.2.1",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0",
+    "esbuild": "0.28.2"
+  }
+}

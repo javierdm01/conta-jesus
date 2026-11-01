@@ -1,0 +1,10 @@
+import {test} from "node:test";
+import assert from "node:assert/strict";
+import {lineNet,profitability,quotePrice,sum,cents,dec} from "../src/lib/money";
+import {date,quantity,money} from "../src/lib/validation";
+test("ejemplo del instalador: 1.850 de ingreso y 1.200 de costes",()=>{const cost=sum([730,85,45,30,25,240,45]);assert.equal(cents(cost),"1200.00");const p=profitability(1850,cost);assert.equal(p.gross,"650.00");assert.equal(p.margin,"35.1")});
+test("margen sobre ventas y recargo son diferentes",()=>{assert.equal(quotePrice(1200,35),"1846.15");assert.notEqual(quotePrice(1200,35),"1620.00");assert.throws(()=>quotePrice(1200,100));assert.throws(()=>quotePrice(1200,-1));assert.throws(()=>quotePrice(-1,30))});
+test("cantidades normalizadas, descuentos y redondeo decimal",()=>{assert.equal(lineNet(100,"0.37",10),"33.30");assert.equal(lineNet(3,"0.335"),"1.01");assert.equal(cents(sum(["0.1","0.2"])),"0.30");assert.throws(()=>lineNet(0,1));assert.throws(()=>lineNet(2,1,101))});
+test("sin facturación no se inventa margen; pérdida y gastos generales separados",()=>{assert.equal(profitability(0,240).margin,null);assert.equal(profitability(100,120,10,2).gross,"-20.00");assert.equal(profitability(100,120,10,2).operating,"-30.00");assert.equal(profitability(100,120,10,2).perHour,"-10.00")});
+test("el cobro bruto no determina el beneficio neto",()=>{const grossInvoice=dec(100).plus(21),p=profitability(100,60);assert.equal(grossInvoice.toString(),"121");assert.equal(p.gross,"40.00");assert.equal(p.margin,"40.0")});
+test("entradas inválidas: infinitos, decimales excesivos, fechas imposibles",()=>{for(const x of ["NaN","Infinity","1e3","-2","1.001"])assert.equal(money.safeParse(x).success,false);assert.equal(quantity.safeParse("0").success,false);assert.equal(date.safeParse("2026-02-30").success,false);assert.equal(date.safeParse("2026-10-18").success,true)});

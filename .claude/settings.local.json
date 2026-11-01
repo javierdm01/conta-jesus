@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(docker compose exec -T db psql -U instala -d instala -c \"select id, kind, status, mime, \\\\\"originalName\\\\\", filename, \\\\\"createdAt\\\\\", length\\(\\\\\"ocrText\\\\\"\\) as len from \\\\\"Document\\\\\" order by \\\\\"createdAt\\\\\" desc limit 5;\")",
+      "Bash(docker compose *)",
+      "PowerShell(docker compose exec -T worker node /tmp/exp.cjs /app/data/documents/ecec3349-25a6-4f46-98ab-aca1f30f89c7.jpg)",
+      "PowerShell(docker compose exec -T worker cat /tmp/out-w3000flat-6.txt)",
+      "PowerShell(docker compose exec -T worker sh -c \"for f in w2500-6 w2500flat-6 w3000flat-4; do echo \\\\\"===== `$f\\\\\"; cat /tmp/out-`$f.txt; done\")",
+      "PowerShell(foreach \\($f in 'w2500-6','w2500flat-6','w3000flat-4'\\) { \"===== $f\"; docker compose exec -T worker cat \"/tmp/out-$f.txt\" })",
+      "PowerShell(docker compose cp \"$env:TEMP\\\\claude\\\\c--Users-javie-Desktop-PRUEBA-CONTABILIDAD-JESUS\\\\2cb41f83-e945-4613-80d4-2fbdf08ef448\\\\scratchpad\\\\inv\\\\exp2.cjs\" worker:/tmp/exp2.cjs 2>$null; docker compose exec -T worker node /tmp/exp2.cjs /app/data/documents/ecec3349-25a6-4f46-98ab-aca1f30f89c7.jpg)",
+      "PowerShell(docker compose cp \"$env:TEMP\\\\claude\\\\c--Users-javie-Desktop-PRUEBA-CONTABILIDAD-JESUS\\\\2cb41f83-e945-4613-80d4-2fbdf08ef448\\\\scratchpad\\\\inv\\\\exp3.cjs\" worker:/tmp/exp3.cjs 2>$null; docker compose exec -T worker node /tmp/exp3.cjs /app/data/documents/ecec3349-25a6-4f46-98ab-aca1f30f89c7.jpg; docker compose cp worker:/tmp/m-2500-6-0.75.png \"$env:TEMP\\\\claude\\\\c--Users-javie-Desktop-PRUEBA-CONTABILIDAD-JESUS\\\\2cb41f83-e945-4613-80d4-2fbdf08ef448\\\\scratchpad\\\\inv\\\\m.png\" 2>$null)",
+      "PowerShell(docker compose cp \"$env:TEMP\\\\claude\\\\c--Users-javie-Desktop-PRUEBA-CONTABILIDAD-JESUS\\\\2cb41f83-e945-4613-80d4-2fbdf08ef448\\\\scratchpad\\\\inv\\\\dbg.cjs\" worker:/tmp/dbg.cjs 2>$null; docker compose exec -T worker node /tmp/dbg.cjs /app/data/documents/ecec3349-25a6-4f46-98ab-aca1f30f89c7.jpg)"
+    ]
+  }
+}

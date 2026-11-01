@@ -1,0 +1,3 @@
+"use client";
+import {ResponsiveContainer,BarChart,Bar,XAxis,YAxis,Tooltip,CartesianGrid} from "recharts";
+export default function ServiceChart({data}:{data:{name:string,gross:number}[]}){return <ResponsiveContainer width="100%" height="100%"><BarChart data={data} margin={{top:10,right:20,left:0,bottom:5}}><CartesianGrid vertical={false} stroke="#edf2ef"/><XAxis dataKey="name" tick={{fontSize:10}} tickLine={false} axisLine={false}/><YAxis tick={{fontSize:10}} tickLine={false} axisLine={false}/><Tooltip formatter={value=>new Intl.NumberFormat("es-ES",{style:"currency",currency:"EUR"}).format(Number(value))}/><Bar dataKey="gross" name="Beneficio bruto" fill="#1b7d68" radius={[5,5,0,0]} maxBarSize={55}/></BarChart></ResponsiveContainer>}

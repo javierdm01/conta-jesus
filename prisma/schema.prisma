@@ -1,0 +1,522 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id             String          @id @default(cuid())
+  name           String
+  taxId          String          @default("")
+  createdAt      DateTime        @default(now())
+  users          User[]
+  customers      Customer[]
+  suppliers      Supplier[]
+  workers        Worker[]
+  jobs           Job[]
+  documents      Document[]
+  costs          Cost[]
+  hours          TimeEntry[]
+  sales          Sale[]
+  quotes         Quote[]
+  overheads      Overhead[]
+  audits         Audit[]
+  stockLots      StockLot[]
+  stockMovements StockMovement[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  companyId     String?
+  company       Company?  @relation(fields: [companyId], references: [id])
+  role          String    @default("TECHNICIAN")
+  sessions      Session[]
+  accounts      Account[]
+  worker        Worker?
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model RateLimit {
+  id          String @id @default(cuid())
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+}
+
+model Customer {
+  id        String                @id @default(cuid())
+  companyId String
+  company   Company               @relation(fields: [companyId], references: [id])
+  name      String
+  taxId     String                @default("")
+  phone     String                @default("")
+  email     String                @default("")
+  address   String                @default("")
+  jobs      Job[]
+  equipment Equipment[]
+  contracts MaintenanceContract[]
+}
+
+model Supplier {
+  id             String               @id @default(cuid())
+  companyId      String
+  company        Company              @relation(fields: [companyId], references: [id])
+  name           String
+  taxId          String               @default("")
+  contact        String               @default("")
+  phone          String               @default("")
+  email          String               @default("")
+  terms          String               @default("")
+  documents      Document[]
+  connections    SupplierConnection[]
+  references     SupplierReference[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model Worker {
+  id         String      @id @default(cuid())
+  companyId  String
+  company    Company     @relation(fields: [companyId], references: [id])
+  userId     String?     @unique
+  user       User?       @relation(fields: [userId], references: [id])
+  name       String
+  hourlyCost Decimal     @db.Decimal(12, 4)
+  specialty  String      @default("")
+  active     Boolean     @default(true)
+  jobs       Job[]
+  hours      TimeEntry[]
+}
+
+model Job {
+  id             String             @id @default(cuid())
+  companyId      String
+  company        Company            @relation(fields: [companyId], references: [id])
+  number         String
+  name           String
+  customerId     String
+  customer       Customer           @relation(fields: [customerId], references: [id])
+  address        String             @default("")
+  service        String
+  status         String             @default("Pendiente de presupuesto")
+  openedAt       DateTime           @default(now())
+  plannedAt      DateTime?
+  finishedAt     DateTime?
+  workerId       String?
+  worker         Worker?            @relation(fields: [workerId], references: [id])
+  costs          Cost[]
+  hours          TimeEntry[]
+  sales          Sale[]
+  quotes         Quote[]
+  lines          DocumentLine[]
+  documents      Document[]
+  stockMovements StockMovement[]
+  reservations   StockReservation[]
+
+  @@unique([companyId, number])
+  @@index([companyId, workerId])
+}
+
+model Document {
+  id           String         @id @default(cuid())
+  companyId    String
+  company      Company        @relation(fields: [companyId], references: [id])
+  uploaderId   String
+  jobId        String?
+  job          Job?           @relation(fields: [jobId], references: [id])
+  kind         String
+  originalName String
+  filename     String
+  mime         String
+  hash         String
+  status       String         @default("QUEUED")
+  text         String         @default("")
+  suggestion   Json?
+  error        String?
+  attempts     Int            @default(0)
+  availableAt  DateTime       @default(now())
+  lockedUntil  DateTime?
+  lockToken    String?
+  supplierId   String?
+  supplier     Supplier?      @relation(fields: [supplierId], references: [id])
+  number       String?
+  date         DateTime?
+  net          Decimal?       @db.Decimal(14, 2)
+  tax          Decimal?       @db.Decimal(14, 2)
+  supersedesId String?        @unique
+  supersedes   Document?      @relation("Replacement", fields: [supersedesId], references: [id])
+  replacedBy   Document?      @relation("Replacement")
+  createdAt    DateTime       @default(now())
+  confirmedAt  DateTime?
+  lines        DocumentLine[]
+  costs        Cost[]
+  stockLots    StockLot[]     @relation("StockReceipt")
+  valuedLots   StockLot[]     @relation("StockInvoice")
+
+  @@unique([companyId, hash])
+  @@unique([companyId, kind, supplierId, number])
+  @@index([status, availableAt])
+}
+
+model DocumentLine {
+  id          String             @id @default(cuid())
+  documentId  String
+  document    Document           @relation(fields: [documentId], references: [id])
+  jobId       String?
+  job         Job?               @relation(fields: [jobId], references: [id])
+  lotId       String?
+  lot         StockLot?          @relation(fields: [lotId], references: [id])
+  reference   String             @default("")
+  description String
+  unit        String
+  quantity    Decimal            @db.Decimal(14, 4)
+  price       Decimal?           @db.Decimal(14, 4)
+  discount    Decimal            @db.Decimal(7, 4)
+  net         Decimal?           @db.Decimal(14, 2)
+  orderLineId String?
+  orderLine   PurchaseOrderLine? @relation(fields: [orderLineId], references: [id])
+
+  @@index([orderLineId])
+}
+
+model PurchaseOrder {
+  id         String              @id @default(cuid())
+  companyId  String
+  company    Company             @relation(fields: [companyId], references: [id])
+  supplierId String
+  supplier   Supplier            @relation(fields: [supplierId], references: [id])
+  number     String
+  date       DateTime
+  expectedAt DateTime?
+  notes      String              @default("")
+  status     String              @default("OPEN")
+  requestKey String              @unique
+  createdAt  DateTime            @default(now())
+  lines      PurchaseOrderLine[]
+
+  @@unique([companyId, number])
+  @@index([companyId, createdAt])
+}
+
+model PurchaseOrderLine {
+  id          String         @id @default(cuid())
+  orderId     String
+  order       PurchaseOrder  @relation(fields: [orderId], references: [id])
+  description String
+  reference   String         @default("")
+  unit        String
+  quantity    Decimal        @db.Decimal(14, 4)
+  cancelled   Decimal        @default(0) @db.Decimal(14, 4)
+  price       Decimal?       @db.Decimal(14, 4)
+  receipts    DocumentLine[]
+
+  @@index([orderId])
+}
+
+model SystemHeartbeat {
+  service  String   @id
+  lastSeen DateTime
+}
+
+model Cost {
+  id              String         @id @default(cuid())
+  companyId       String
+  company         Company        @relation(fields: [companyId], references: [id])
+  jobId           String
+  job             Job            @relation(fields: [jobId], references: [id])
+  type            String
+  description     String
+  amount          Decimal        @db.Decimal(14, 2)
+  date            DateTime       @default(now())
+  documentId      String?
+  document        Document?      @relation(fields: [documentId], references: [id])
+  reversed        Boolean        @default(false)
+  stockMovementId String?        @unique
+  stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id])
+  requestKey      String         @unique @default(cuid())
+}
+
+model StockLot {
+  id                String             @id @default(cuid())
+  companyId         String
+  company           Company            @relation(fields: [companyId], references: [id])
+  code              String             @unique
+  documentId        String?
+  document          Document?          @relation("StockReceipt", fields: [documentId], references: [id])
+  invoiceDocumentId String?
+  invoiceDocument   Document?          @relation("StockInvoice", fields: [invoiceDocumentId], references: [id])
+  description       String
+  reference         String             @default("")
+  brand             String             @default("")
+  model             String             @default("")
+  family            String             @default("")
+  unit              String
+  received          Decimal            @db.Decimal(14, 4)
+  onHand            Decimal            @db.Decimal(14, 4)
+  totalValue        Decimal?           @db.Decimal(14, 2)
+  remainingValue    Decimal?           @db.Decimal(14, 2)
+  location          String             @default("")
+  notes             String             @default("")
+  minimum           Decimal            @default(0) @db.Decimal(14, 4)
+  createdAt         DateTime           @default(now())
+  lines             DocumentLine[]
+  movements         StockMovement[]
+  reservations      StockReservation[]
+  counts            StockCount[]
+
+  @@index([companyId, createdAt])
+  @@index([documentId])
+}
+
+model StockMovement {
+  id         String          @id @default(cuid())
+  companyId  String
+  company    Company         @relation(fields: [companyId], references: [id])
+  lotId      String
+  lot        StockLot        @relation(fields: [lotId], references: [id])
+  kind       String
+  quantity   Decimal         @db.Decimal(14, 4)
+  amount     Decimal?        @db.Decimal(14, 2)
+  jobId      String?
+  job        Job?            @relation(fields: [jobId], references: [id])
+  sourceId   String?
+  source     StockMovement?  @relation("StockReturn", fields: [sourceId], references: [id])
+  returns    StockMovement[] @relation("StockReturn")
+  countId    String?
+  count      StockCount?     @relation(fields: [countId], references: [id])
+  notes      String          @default("")
+  userId     String
+  requestKey String          @unique
+  createdAt  DateTime        @default(now())
+  cost       Cost?
+
+  @@index([lotId, createdAt])
+  @@index([companyId, jobId])
+  @@index([sourceId])
+  @@index([countId])
+}
+
+model StockCount {
+  id         String          @id @default(cuid())
+  lotId      String
+  lot        StockLot        @relation(fields: [lotId], references: [id])
+  expected   Decimal         @db.Decimal(14, 4)
+  counted    Decimal         @db.Decimal(14, 4)
+  reason     String
+  userId     String
+  userName   String
+  requestKey String          @unique
+  createdAt  DateTime        @default(now())
+  movements  StockMovement[]
+
+  @@index([lotId, createdAt])
+}
+
+model StockReservation {
+  id       String   @id @default(cuid())
+  lotId    String
+  lot      StockLot @relation(fields: [lotId], references: [id])
+  jobId    String
+  job      Job      @relation(fields: [jobId], references: [id])
+  quantity Decimal  @db.Decimal(14, 4)
+
+  @@unique([lotId, jobId])
+}
+
+model TimeEntry {
+  id         String   @id @default(cuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id])
+  jobId      String
+  job        Job      @relation(fields: [jobId], references: [id])
+  workerId   String
+  worker     Worker   @relation(fields: [workerId], references: [id])
+  date       DateTime
+  hours      Decimal  @db.Decimal(7, 2)
+  hourlyCost Decimal  @db.Decimal(12, 4)
+  activity   String
+  billable   Boolean  @default(true)
+  notes      String   @default("")
+  requestKey String   @unique
+}
+
+model Sale {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
+  jobId       String
+  job         Job       @relation(fields: [jobId], references: [id])
+  number      String
+  description String
+  date        DateTime
+  dueAt       DateTime?
+  net         Decimal   @db.Decimal(14, 2)
+  tax         Decimal   @db.Decimal(14, 2)
+  withholding Decimal   @db.Decimal(14, 2)
+  collected   Decimal   @default(0) @db.Decimal(14, 2)
+  documentId  String?   @unique
+  requestKey  String    @unique
+
+  @@unique([companyId, number])
+}
+
+model Quote {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id])
+  jobId        String
+  job          Job      @relation(fields: [jobId], references: [id])
+  name         String
+  inputs       Json
+  cost         Decimal  @db.Decimal(14, 2)
+  net          Decimal  @db.Decimal(14, 2)
+  plannedHours Decimal  @db.Decimal(7, 2)
+  approved     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+model Overhead {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  description String
+  amount      Decimal  @db.Decimal(14, 2)
+  tax         Decimal  @default(0) @db.Decimal(14, 2)
+  date        DateTime
+}
+
+model Audit {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  userId    String
+  action    String
+  entityId  String
+  createdAt DateTime @default(now())
+
+  @@index([companyId, createdAt])
+}
+
+// Estructura de fase 2: sin conectores o comparaciones ficticias.
+model SupplierConnection {
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+  type       String
+  status     String   @default("NOT_CONFIGURED")
+  config     Json
+}
+
+model CatalogProduct {
+  id              String              @id @default(cuid())
+  companyId       String
+  description     String
+  manufacturerRef String?
+  brand           String?
+  family          String
+  unit            String
+  references      SupplierReference[]
+}
+
+model SupplierReference {
+  id         String         @id @default(cuid())
+  supplierId String
+  supplier   Supplier       @relation(fields: [supplierId], references: [id])
+  productId  String
+  product    CatalogProduct @relation(fields: [productId], references: [id])
+  reference  String
+  prices     PriceHistory[]
+
+  @@unique([supplierId, reference])
+}
+
+model PriceHistory {
+  id           String            @id @default(cuid())
+  referenceId  String
+  reference    SupplierReference @relation(fields: [referenceId], references: [id])
+  date         DateTime
+  netUnitPrice Decimal           @db.Decimal(14, 4)
+}
+
+model Equipment {
+  id          String    @id @default(cuid())
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id])
+  brand       String
+  model       String
+  serial      String
+  location    String
+  installedAt DateTime?
+}
+
+model MaintenanceContract {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  name       String
+  fee        Decimal  @db.Decimal(14, 2)
+  nextVisit  DateTime
+  status     String
+}
+
+model SyncTask {
+  id          String   @id @default(cuid())
+  companyId   String
+  type        String
+  status      String   @default("QUEUED")
+  payload     Json
+  attempts    Int      @default(0)
+  availableAt DateTime @default(now())
+}

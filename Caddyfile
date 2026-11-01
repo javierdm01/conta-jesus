@@ -1,0 +1,12 @@
+# Proxy HTTPS delante de la aplicación. Variables definidas en .env:
+#   SITE_ADDRESS  dominio o IP con la que se accede (sin https://)
+#   CADDY_TLS     "tls internal" para red local (CA propia de Caddy) o vacío con dominio público (Let's Encrypt)
+{$SITE_ADDRESS} {
+	{$CADDY_TLS}
+	encode zstd gzip
+	request_body {
+		max_size 30MB
+	}
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy web:3000
+}
