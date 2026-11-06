@@ -37,6 +37,12 @@ import {
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import useSWR from "swr";
+import SaleProducts, {
+  productLine,
+  type SaleProduct,
+  type SaleProductLine,
+} from "./sale-products";
+import { matchesSearch } from "@/lib/product-search";
 const InventoryWorkspace = dynamic(() => import("./inventory/workspace"), {
   loading: () => (
     <div className="inventory-loading">
@@ -83,6 +89,7 @@ type Field = {
   hint?: string;
 };
 type Modal = {
+  product?: SaleProduct;
   title: string;
   action: string;
   fields: Field[];
@@ -209,8 +216,9 @@ function Panel({
 // Contraseña inicial legible: sin caracteres ambiguos (0/O, 1/l/I).
 const randomPassword = () => {
   const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) =>
-    chars[n % chars.length],
+  return Array.from(
+    crypto.getRandomValues(new Uint8Array(16)),
+    (n) => chars[n % chars.length],
   ).join("");
 };
 async function request(url: string, body: unknown) {
@@ -243,6 +251,7 @@ export function Dashboard({
     [sort, setSort] = useState("gross");
   const router = useRouter();
   const [documentView, setDocumentView] = useState("all");
+  const [searchScope, setSearchScope] = useState("all");
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [deletingDocs, setDeletingDocs] = useState(false);
   const [openingReview, setOpeningReview] = useState<string | null>(null);
@@ -280,11 +289,30 @@ export function Dashboard({
     }
   }, [mutate]);
   const [searchTerm, setSearchTerm] = useState("");
+  const {
+    data: productMatches,
+    error: productSearchError,
+    isLoading: productsSearching,
+  } = useSWR<{ items: (SaleProduct & { onHand: string })[]; total: number }>(
+    searchTerm
+      ? `/api/search/products?q=${encodeURIComponent(searchTerm)}`
+      : null,
+    async (url: string) => {
+      const r = await fetch(url);
+      const body = await r.json();
+      if (!r.ok) throw Error(body.error);
+      return body;
+    },
+  );
   useEffect(() => {
     const timer = setTimeout(() => setSearchTerm(query.trim()), 250);
     return () => clearTimeout(timer);
   }, [query]);
-  const { data: documentMatches } = useSWR<
+  const {
+    data: documentMatches,
+    error: documentSearchError,
+    isLoading: documentsSearching,
+  } = useSWR<
     { id: string; originalName: string; number?: string; status: string }[]
   >(
     state?.user.role === "ADMIN" && searchTerm.length >= 2
@@ -372,10 +400,7 @@ export function Dashboard({
           n.href === "/inventario",
       );
   const matches = (...values: (string | undefined)[]) =>
-    values
-      .join(" ")
-      .toLocaleLowerCase("es")
-      .includes(query.toLocaleLowerCase("es"));
+    matchesSearch(query, values);
   const jobs = s.jobs.filter(
     (j) =>
       matches(
@@ -690,11 +715,12 @@ export function Dashboard({
         },
       ],
     });
-  const createSale = (doc?: Doc) => {
+  const createSale = (doc?: Doc, product?: SaleProduct) => {
     setReview(null);
     setModal({
       title: "Registrar factura de cliente",
       action: "sale",
+      product,
       fixed: doc ? { documentId: doc.id } : {},
       extra: doc?.text,
       fields: [
@@ -891,7 +917,10 @@ export function Dashboard({
               variant="outline"
               disabled={deletingDocs}
               onClick={() =>
-                removeDocuments(selectedDocs, `${selectedDocs.length} documento(s)`)
+                removeDocuments(
+                  selectedDocs,
+                  `${selectedDocs.length} documento(s)`,
+                )
               }
             >
               <Trash2 size={16} /> Eliminar seleccionados
@@ -912,7 +941,9 @@ export function Dashboard({
                   disabled={deletingDocs}
                   onChange={(e) =>
                     setSelectedDocs((cur) =>
-                      e.target.checked ? [...cur, d.id] : cur.filter((x) => x !== d.id),
+                      e.target.checked
+                        ? [...cur, d.id]
+                        : cur.filter((x) => x !== d.id),
                     )
                   }
                 />
@@ -990,9 +1021,15 @@ export function Dashboard({
                 <button
                   className="doc-delete"
                   aria-label={`Eliminar ${d.number ?? d.originalName}`}
-                  title={d.status === "PROCESSING" ? "Se está leyendo ahora mismo" : "Eliminar subida"}
+                  title={
+                    d.status === "PROCESSING"
+                      ? "Se está leyendo ahora mismo"
+                      : "Eliminar subida"
+                  }
                   disabled={deletingDocs || d.status === "PROCESSING"}
-                  onClick={() => removeDocuments([d.id], `«${d.number ?? d.originalName}»`)}
+                  onClick={() =>
+                    removeDocuments([d.id], `«${d.number ?? d.originalName}»`)
+                  }
                 >
                   <Trash2 size={16} /> Eliminar
                 </button>
@@ -1073,6 +1110,17 @@ export function Dashboard({
                 <tr key={x.id}>
                   <td>
                     <strong>{x.number}</strong>
+                    {!!x.lines?.length && (
+                      <details className="invoice-line-details">
+                        <summary>Artículos ({x.lines.length})</summary>
+                        {x.lines.map((l) => (
+                          <p key={l.id}>
+                            <strong>{l.description}</strong> · {l.quantity}{" "}
+                            {l.unit} × {euro(l.price)} = {euro(l.net)}
+                          </p>
+                        ))}
+                      </details>
+                    )}
                     <div className="muted">
                       {x.jobName ?? x.description} · {fmtDate(x.date)}
                     </div>
@@ -1572,7 +1620,7 @@ export function Dashboard({
             <Search size={18} />
             <input
               aria-label="Buscar en la empresa"
-              placeholder="Buscar trabajos, clientes, documentos…"
+              placeholder="Buscar artículos, alias, referencias, trabajos…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -1642,70 +1690,164 @@ export function Dashboard({
               title={`Resultados para «${query}»`}
               subtitle="Trabajos, clientes, direcciones, fechas, documentos, referencias y proveedores"
             >
-              <div className="record-list">
-                {s.jobs
-                  .filter((j) =>
-                    matches(
-                      j.name,
-                      j.number,
-                      j.customer.name,
-                      j.address,
-                      j.service,
-                      j.plannedAt,
-                    ),
-                  )
-                  .map((j) => (
-                    <div className="record" key={j.id}>
-                      <Link className="job-link" href={`/trabajos/${j.id}`}>
-                        {j.number} · {j.name}
-                      </Link>
-                      <span>{j.customer.name}</span>
-                    </div>
+              <div className="global-search-tools">
+                <label>
+                  Buscar en
+                  <select
+                    aria-label="Buscar en"
+                    value={searchScope}
+                    onChange={(e) => setSearchScope(e.target.value)}
+                  >
+                    <option value="all">Toda la empresa</option>
+                    <option value="products">Artículos</option>
+                    <option value="company">
+                      Trabajos, contactos y documentos
+                    </option>
+                  </select>
+                </label>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setQuery("");
+                    setSearchScope("all");
+                  }}
+                >
+                  Cerrar búsqueda
+                </Button>
+              </div>
+              {searchScope !== "company" && (
+                <section
+                  className="global-product-results"
+                  aria-label="Artículos encontrados"
+                >
+                  <h3>
+                    Artículos{" "}
+                    {productMatches ? `(${productMatches.total})` : ""}
+                  </h3>
+                  {productsSearching && (
+                    <p role="status">Buscando artículos…</p>
+                  )}
+                  {productSearchError && (
+                    <p role="alert" className="error">
+                      No se pudo buscar en el almacén. Vuelve a intentarlo.
+                    </p>
+                  )}
+                  {productMatches?.items.map((p) => (
+                    <Link
+                      className="global-product-result"
+                      key={p.id}
+                      href={`/inventario/${p.code}`}
+                    >
+                      <strong>{p.alias || p.description}</strong>
+                      <small>
+                        {p.alias ? `${p.description} · ` : ""}
+                        {p.reference || p.code} · {p.onHand} {p.unit}
+                      </small>
+                    </Link>
                   ))}
-                {s.suppliers
-                  .filter((x) => matches(x.name, x.taxId, x.email))
-                  .map((x) => (
-                    <div className="record" key={x.id}>
-                      <span>Proveedor · {x.name}</span>
-                      <span>{x.phone}</span>
-                    </div>
-                  ))}
-                {s.documents
-                  .filter((x) => matches(x.number, x.originalName, x.text))
-                  .map((x) => (
-                    <div className="record" key={x.id}>
-                      <a className="job-link" href={`/api/documents/${x.id}`}>
-                        {x.number ?? x.originalName}
-                      </a>
-                      <Pill>{docStatus[x.status]}</Pill>
-                    </div>
-                  ))}
-                {documentMatches
-                  ?.filter(
-                    (d) =>
-                      !s.documents.some(
-                        (x) =>
-                          x.id === d.id && matches(x.number, x.originalName),
+                  {productMatches?.total === 0 && (
+                    <p>
+                      No hay artículos que coincidan. Puedes buscar por parte
+                      del nombre, alias, marca, ubicación o referencia.
+                    </p>
+                  )}
+                  {productMatches &&
+                    productMatches.total > productMatches.items.length && (
+                      <p>
+                        Mostrando {productMatches.items.length} de{" "}
+                        {productMatches.total}. Añade otra palabra para afinar.
+                      </p>
+                    )}
+                </section>
+              )}
+              <div hidden={searchScope === "products"}>
+                {documentsSearching && (
+                  <p className="small-note p-4" role="status">
+                    Buscando documentos…
+                  </p>
+                )}
+                {documentSearchError && (
+                  <p className="error p-4" role="alert">
+                    No se pudieron buscar los documentos. Vuelve a intentarlo.
+                  </p>
+                )}
+                <div className="record-list">
+                  {s.jobs
+                    .filter((j) =>
+                      matches(
+                        j.name,
+                        j.number,
+                        j.customer.name,
+                        j.address,
+                        j.service,
+                        j.plannedAt,
                       ),
-                  )
-                  .map((d) => (
-                    <div className="record" key={`search-${d.id}`}>
-                      <a className="job-link" href={`/api/documents/${d.id}`}>
-                        {d.number ?? d.originalName}
-                      </a>
-                      <Pill>{docStatus[d.status]}</Pill>
-                    </div>
-                  ))}
-                {s.sales
-                  .filter((x) =>
-                    matches(x.number, x.description, x.jobName, x.date),
-                  )
-                  .map((x) => (
-                    <div className="record" key={x.id}>
-                      <span>Factura · {x.number}</span>
-                      <span>{euro(x.net)}</span>
-                    </div>
-                  ))}
+                    )
+                    .map((j) => (
+                      <div className="record" key={j.id}>
+                        <Link className="job-link" href={`/trabajos/${j.id}`}>
+                          {j.number} · {j.name}
+                        </Link>
+                        <span>{j.customer.name}</span>
+                      </div>
+                    ))}
+                  {s.suppliers
+                    .filter((x) => matches(x.name, x.taxId, x.email, x.phone))
+                    .map((x) => (
+                      <div className="record" key={x.id}>
+                        <span>Proveedor · {x.name}</span>
+                        <span>{x.phone}</span>
+                      </div>
+                    ))}
+                  {s.customers
+                    .filter((x) =>
+                      matches(x.name, x.taxId, x.phone, x.email, x.address),
+                    )
+                    .map((x) => (
+                      <div className="record" key={`customer-${x.id}`}>
+                        <Link className="job-link" href="/trabajos">
+                          Cliente · {x.name}
+                        </Link>
+                        <span>{x.phone}</span>
+                      </div>
+                    ))}
+                  {s.documents
+                    .filter((x) => matches(x.number, x.originalName, x.text))
+                    .map((x) => (
+                      <div className="record" key={x.id}>
+                        <a className="job-link" href={`/api/documents/${x.id}`}>
+                          {x.number ?? x.originalName}
+                        </a>
+                        <Pill>{docStatus[x.status]}</Pill>
+                      </div>
+                    ))}
+                  {documentMatches
+                    ?.filter(
+                      (d) =>
+                        !s.documents.some(
+                          (x) =>
+                            x.id === d.id && matches(x.number, x.originalName),
+                        ),
+                    )
+                    .map((d) => (
+                      <div className="record" key={`search-${d.id}`}>
+                        <a className="job-link" href={`/api/documents/${d.id}`}>
+                          {d.number ?? d.originalName}
+                        </a>
+                        <Pill>{docStatus[d.status]}</Pill>
+                      </div>
+                    ))}
+                  {s.sales
+                    .filter((x) =>
+                      matches(x.number, x.description, x.jobName, x.date),
+                    )
+                    .map((x) => (
+                      <div className="record" key={x.id}>
+                        <span>Factura · {x.number}</span>
+                        <span>{euro(x.net)}</span>
+                      </div>
+                    ))}
+                </div>
               </div>
             </Panel>
           )}
@@ -2269,6 +2411,7 @@ export function Dashboard({
               jobs={s.jobs}
               selectedCode={pathname.split("/")[2]}
               onChanged={load}
+              onInvoiceProduct={(product) => createSale(undefined, product)}
             />
           )}
           {children}
@@ -2754,6 +2897,20 @@ function OperationForm({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [key] = useState(() => uuid());
+  const [saleLines, setSaleLines] = useState<SaleProductLine[]>(() =>
+    modal.product ? [productLine(modal.product)] : [],
+  );
+  let saleNet = "";
+  try {
+    if (saleLines.length)
+      saleNet = cents(
+        sum(
+          saleLines.map((l) =>
+            l.quantity && l.price ? lineNet(l.quantity, l.price) : "0",
+          ),
+        ),
+      );
+  } catch {}
   let preview = "";
   if (modal.action === "quote") {
     try {
@@ -2789,6 +2946,14 @@ function OperationForm({
               ...modal.fixed,
               requestKey: key,
             };
+            if (modal.action === "sale" && saleLines.length) {
+              payload.lines = saleLines;
+              payload.net = saleNet;
+              payload.description = saleLines
+                .map((l) => l.description)
+                .join("; ")
+                .slice(0, 200);
+            }
             for (const f of modal.fields)
               if (f.required === false && !payload[f.name])
                 delete payload[f.name];
@@ -2811,64 +2976,90 @@ function OperationForm({
             <pre className="ocr-text">{modal.extra}</pre>
           </details>
         )}
+        {modal.action === "sale" && (
+          <SaleProducts lines={saleLines} onChange={setSaleLines} />
+        )}
         <div className="form-grid">
-          {modal.fields.map((f) => (
-            <label
-              key={f.name}
-              className={f.full || f.type === "textarea" ? "full" : ""}
-            >
-              {f.label}
-              {f.required === false && (
-                <span className="font-normal text-slate-400"> · opcional</span>
-              )}
-              {f.type === "select" ? (
-                <select
-                  name={f.name}
-                  value={values[f.name]}
-                  required={f.required !== false}
-                  onChange={(e) =>
-                    setValues({ ...values, [f.name]: e.target.value })
-                  }
-                >
-                  {(!f.required || !f.options?.length) && (
-                    <option value="">
-                      {f.options?.length
-                        ? "Sin asignar"
-                        : "Añade antes un registro"}
-                    </option>
-                  )}
-                  {f.options?.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              ) : f.type === "textarea" ? (
-                <textarea
-                  name={f.name}
-                  value={values[f.name]}
-                  onChange={(e) =>
-                    setValues({ ...values, [f.name]: e.target.value })
-                  }
-                />
-              ) : (
-                <input
-                  name={f.name}
-                  type={f.type ?? "text"}
-                  value={values[f.name]}
-                  required={f.required !== false}
-                  min={f.type === "number" ? "0" : undefined}
-                  step={f.type === "number" ? "0.0001" : undefined}
-                  onChange={(e) =>
-                    setValues({ ...values, [f.name]: e.target.value })
-                  }
-                />
-              )}{" "}
-              {f.hint && (
-                <p className="small-note -mt-3 mb-4 font-normal">{f.hint}</p>
-              )}
-            </label>
-          ))}
+          {modal.fields
+            .filter(
+              (f) =>
+                !(
+                  modal.action === "sale" &&
+                  saleLines.length &&
+                  f.name === "description"
+                ),
+            )
+            .map((f) => (
+              <label
+                key={f.name}
+                className={f.full || f.type === "textarea" ? "full" : ""}
+              >
+                {f.label}
+                {f.required === false && (
+                  <span className="font-normal text-slate-400">
+                    {" "}
+                    · opcional
+                  </span>
+                )}
+                {f.type === "select" ? (
+                  <select
+                    name={f.name}
+                    value={values[f.name]}
+                    required={f.required !== false}
+                    onChange={(e) =>
+                      setValues({ ...values, [f.name]: e.target.value })
+                    }
+                  >
+                    {(!f.required || !f.options?.length) && (
+                      <option value="">
+                        {f.options?.length
+                          ? "Sin asignar"
+                          : "Añade antes un registro"}
+                      </option>
+                    )}
+                    {f.options?.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : f.type === "textarea" ? (
+                  <textarea
+                    name={f.name}
+                    value={values[f.name]}
+                    onChange={(e) =>
+                      setValues({ ...values, [f.name]: e.target.value })
+                    }
+                  />
+                ) : (
+                  <input
+                    name={f.name}
+                    type={f.type ?? "text"}
+                    value={
+                      modal.action === "sale" &&
+                      f.name === "net" &&
+                      saleLines.length
+                        ? saleNet
+                        : values[f.name]
+                    }
+                    readOnly={
+                      modal.action === "sale" &&
+                      f.name === "net" &&
+                      saleLines.length > 0
+                    }
+                    required={f.required !== false}
+                    min={f.type === "number" ? "0" : undefined}
+                    step={f.type === "number" ? "0.0001" : undefined}
+                    onChange={(e) =>
+                      setValues({ ...values, [f.name]: e.target.value })
+                    }
+                  />
+                )}{" "}
+                {f.hint && (
+                  <p className="small-note -mt-3 mb-4 font-normal">{f.hint}</p>
+                )}
+              </label>
+            ))}
         </div>
         {modal.action === "quote" && (
           <div className="quote-preview">

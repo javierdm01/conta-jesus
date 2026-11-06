@@ -58,6 +58,7 @@ export type Sale = {
   collected: string;
   dueAt?: string;
   jobName?: string;
+  lines?: {id:string;description:string;unit:string;quantity:string;price:string;net:string}[];
 };
 export type Metrics = {
   net: string;

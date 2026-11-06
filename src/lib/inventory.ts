@@ -8,6 +8,7 @@ import { dec, sum, cents, lineNet, documentLineNet } from "./money";
 import { allocateDocumentValue } from "./document-values";
 import { portion, quantityForUnit, stockGroupKey } from "./inventory-math";
 import { productFamily } from "./ocr";
+import { recommendedPrice } from "./product-search";
 
 type Tx = Prisma.TransactionClient;
 function allocate(values: string[], target: string) {
@@ -298,12 +299,26 @@ export async function inventoryOperation(
         const first = group[0],
           quantity = sum(group.map((l) => l.quantity)).toString(),
           net = priced ? groupValues[groupIndex++] : null;
+        const previous = first.reference
+          ? await tx.stockLot.findFirst({
+              where: {
+                companyId: u.companyId,
+                reference: { equals: first.reference, mode: "insensitive" },
+                unit: first.unit,
+                alias: { not: "" },
+                document: { supplierId: d.supplierId },
+              },
+              orderBy: { createdAt: "desc" },
+              select: { alias: true },
+            })
+          : null;
         const lot = await tx.stockLot.create({
           data: {
             companyId: u.companyId,
             code: `LT-${randomBytes(7).toString("hex").toUpperCase()}`,
             documentId: doc.id,
             description: first.description,
+            alias: previous?.alias ?? "",
             reference: first.reference,
             unit: first.unit,
             received: quantity,
@@ -329,7 +344,9 @@ export async function inventoryOperation(
             price: l.price ?? null,
             discount: l.discount,
             net:
-              priced && l.price != null ? lineNet(l.quantity, l.price, l.discount) : null,
+              priced && l.price != null
+                ? lineNet(l.quantity, l.price, l.discount)
+                : null,
           })),
         });
         await tx.stockMovement.create({
@@ -394,8 +411,13 @@ export async function inventoryOperation(
           .max(500),
       })
       .parse(input);
-    const receiptIds = [...new Set(d.receiptIds ?? (d.supersedesId ? [d.supersedesId] : []))];
-    if (!receiptIds.length || (d.supersedesId && !receiptIds.includes(d.supersedesId)))
+    const receiptIds = [
+      ...new Set(d.receiptIds ?? (d.supersedesId ? [d.supersedesId] : [])),
+    ];
+    if (
+      !receiptIds.length ||
+      (d.supersedesId && !receiptIds.includes(d.supersedesId))
+    )
       throw new AppError("Selecciona los albaranes que incluye esta factura.");
     for (const l of d.lines.filter((l) => !l.financial)) {
       try {
@@ -430,17 +452,22 @@ export async function inventoryOperation(
         },
         include: { stockLots: true },
       });
-      if (!doc || originals.length !== receiptIds.length || originals.some(r=>!r.stockLots.length || r.stockLots.some(l=>l.invoiceDocumentId)))
+      if (
+        !doc ||
+        originals.length !== receiptIds.length ||
+        originals.some(
+          (r) =>
+            !r.stockLots.length || r.stockLots.some((l) => l.invoiceDocumentId),
+        )
+      )
         throw new AppError(
           "Selecciona albaranes de almacén del mismo proveedor pendientes de facturar.",
           409,
         );
-      const lots=originals.flatMap(r=>r.stockLots);
+      const lots = originals.flatMap((r) => r.stockLots);
       if (
         d.lines.some(
-          (l) =>
-            !l.financial &&
-            !lots.some((lot) => lot.id === l.lotId),
+          (l) => !l.financial && !lots.some((lot) => lot.id === l.lotId),
         )
       )
         throw new AppError(
@@ -757,6 +784,7 @@ export async function inventoryOperation(
     const d = z
       .object({
         lotId: v.id,
+        alias: z.string().trim().max(200).optional(),
         location: v.text,
         brand: v.text,
         model: v.text,
@@ -767,10 +795,22 @@ export async function inventoryOperation(
     return serial(async (tx) => {
       const lot = await tx.stockLot.findFirst({
         where: { id: d.lotId, companyId: u.companyId },
+        include: { document: { select: { supplierId: true } } },
       });
       if (!lot) throw new AppError("Artículo no disponible.", 404);
       const { lotId, ...fields } = d;
       await tx.stockLot.update({ where: { id: lotId }, data: fields });
+      if (d.alias !== undefined && lot.reference && lot.document?.supplierId) {
+        await tx.stockLot.updateMany({
+          where: {
+            companyId: u.companyId,
+            reference: { equals: lot.reference, mode: "insensitive" },
+            unit: lot.unit,
+            document: { supplierId: lot.document.supplierId },
+          },
+          data: { alias: d.alias },
+        });
+      }
       await audit(tx, u, "Editar ficha de material", lot.id);
       return { id: lot.id };
     });
@@ -822,6 +862,7 @@ export async function inventoryState(u: Actor) {
         id: l.id,
         code: l.code,
         description: l.description,
+        alias: l.alias,
         reference: l.reference,
         brand: l.brand,
         model: l.model,
@@ -844,6 +885,10 @@ export async function inventoryState(u: Actor) {
         ...(adminRole
           ? {
               totalValue: l.totalValue?.toString() ?? null,
+              recommendedPrice: recommendedPrice(
+                l.totalValue?.toString(),
+                l.received.toString(),
+              ),
               remainingValue: l.remainingValue?.toString() ?? null,
               document: l.document,
               invoice: l.invoiceDocument,

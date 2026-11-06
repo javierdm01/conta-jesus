@@ -3,7 +3,7 @@ import { uuid } from "@/lib/uuid";
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Package,
@@ -34,6 +34,7 @@ import type { Job } from "@/lib/workspace-types";
 import { dec, sum } from "@/lib/money";
 import { lotIdentifier } from "@/lib/inventory-math";
 import { filterInventory, inventoryCsv, lowStock } from "@/lib/inventory-view";
+import type { SaleProduct } from "../sale-products";
 const CountForm = dynamic(() => import("./count-form"));
 const Scanner = dynamic(() => import("./scanner"), {
   ssr: false,
@@ -71,15 +72,18 @@ export default function InventoryWorkspace({
   jobs,
   selectedCode,
   onChanged,
+  onInvoiceProduct,
 }: {
   jobs: Job[];
   selectedCode?: string;
   onChanged: () => Promise<void>;
+  onInvoiceProduct?: (product: SaleProduct) => void;
 }) {
   const router = useRouter(),
     params = useSearchParams(),
     receiptId = params.get("albaran"),
     defaultJob = params.get("trabajo") ?? undefined;
+  const { mutate: mutateSearch } = useSWRConfig();
   const { data, error, mutate, isLoading } = useSWR<InventoryData>(
     "/api/inventory",
     async (url) => {
@@ -132,7 +136,16 @@ export default function InventoryWorkspace({
     setMove(null);
     setEdit(null);
     setCount(null);
-    const refreshed = await Promise.allSettled([mutate(), onChanged()]);
+    const refreshed = await Promise.allSettled([
+      mutate(),
+      onChanged(),
+      mutateSearch(
+        (key) =>
+          typeof key === "string" && key.startsWith("/api/search/products"),
+        undefined,
+        { revalidate: true },
+      ),
+    ]);
     setNotice(
       refreshed.some((r) => r.status === "rejected")
         ? "Operación guardada. No se pudo actualizar toda la pantalla; pulsa Actualizar existencias."
@@ -206,7 +219,7 @@ export default function InventoryWorkspace({
           <div className="eyebrow">CADA PIEZA, EN SU SITIO</div>
           <h1 className="mt-2">
             {selectedCode
-              ? (lot?.description ?? "Artículo no disponible")
+              ? lot?.alias || lot?.description || "Artículo no disponible"
               : "Tu almacén, al día"}
           </h1>
           <p className="subtitle">
@@ -270,6 +283,11 @@ export default function InventoryWorkspace({
                 <Package size={36} />
               </div>
               <div className="flex-1">
+                {lot.alias && (
+                  <p className="small-note">
+                    Descripción del proveedor: {lot.description}
+                  </p>
+                )}
                 <div className="flex gap-2 flex-wrap items-center">
                   <span className="lot-code">{lot.code}</span>
                   <StockBadge lot={lot} />
@@ -324,6 +342,27 @@ export default function InventoryWorkspace({
               />
             </div>
             {actions(lot)}
+            {data.isAdmin && (
+              <div className="product-pricing">
+                <div>
+                  <strong>
+                    Venta recomendada: {euro(lot.recommendedPrice)}
+                    {lot.recommendedPrice != null ? ` / ${lot.unit}` : ""}
+                  </strong>
+                  <p>
+                    Coste unitario + 30 %, sin IVA.{" "}
+                    {lot.recommendedPrice == null
+                      ? "Se calculará al conocer el coste."
+                      : "Puedes ajustar el precio al facturar."}
+                  </p>
+                </div>
+                {onInvoiceProduct && (
+                  <Button onClick={() => onInvoiceProduct(lot)}>
+                    Añadir a factura
+                  </Button>
+                )}
+              </div>
+            )}
             {!lot.valued && (
               <div className="info-banner mt-5">
                 <Clock size={22} />
@@ -534,54 +573,57 @@ export default function InventoryWorkspace({
         )
       ) : (
         <>
-          <div className="stats">
-            <StockStat
-              icon={Boxes}
-              title="Lotes en almacén"
-              value={String(
-                data.lots.filter((l) => dec(l.onHand).gt(0)).length,
-              )}
-              note="Artículos con unidades disponibles"
-            />
-            <StockStat
-              icon={Bookmark}
-              title="Lotes con reserva"
-              value={String(
-                data.lots.filter((l) => dec(l.reserved).gt(0)).length,
-              )}
-              note="Apartados para próximos trabajos"
-            />
-            <StockStat
-              icon={ArrowUpFromLine}
-              title="Salidas a trabajos"
-              value={String(
-                data.lots.reduce(
-                  (a, l) =>
-                    a + l.movements.filter((m) => m.kind === "USE").length,
-                  0,
-                ),
-              )}
-              note="Consumos con fecha y destino"
-            />
-            <StockStat
-              icon={Tag}
-              title={
-                data.isAdmin
-                  ? "Valor conocido en stock"
-                  : "Lotes pendientes de precio"
-              }
-              value={
-                data.isAdmin
-                  ? euro(
-                      sum(
-                        data.lots.map((l) => l.remainingValue ?? 0),
-                      ).toString(),
-                    )
-                  : String(data.lots.filter((l) => !l.valued).length)
-              }
-              note={`${data.lots.filter((l) => !l.valued && dec(l.onHand).gt(0)).length} lotes pendientes de valorar`}
-            />
-          </div>
+          <details className="inventory-summary">
+            <summary>Resumen del almacén · {data.lots.length} lotes</summary>
+            <div className="stats">
+              <StockStat
+                icon={Boxes}
+                title="Lotes en almacén"
+                value={String(
+                  data.lots.filter((l) => dec(l.onHand).gt(0)).length,
+                )}
+                note="Artículos con unidades disponibles"
+              />
+              <StockStat
+                icon={Bookmark}
+                title="Lotes con reserva"
+                value={String(
+                  data.lots.filter((l) => dec(l.reserved).gt(0)).length,
+                )}
+                note="Apartados para próximos trabajos"
+              />
+              <StockStat
+                icon={ArrowUpFromLine}
+                title="Salidas a trabajos"
+                value={String(
+                  data.lots.reduce(
+                    (a, l) =>
+                      a + l.movements.filter((m) => m.kind === "USE").length,
+                    0,
+                  ),
+                )}
+                note="Consumos con fecha y destino"
+              />
+              <StockStat
+                icon={Tag}
+                title={
+                  data.isAdmin
+                    ? "Valor conocido en stock"
+                    : "Lotes pendientes de precio"
+                }
+                value={
+                  data.isAdmin
+                    ? euro(
+                        sum(
+                          data.lots.map((l) => l.remainingValue ?? 0),
+                        ).toString(),
+                      )
+                    : String(data.lots.filter((l) => !l.valued).length)
+                }
+                note={`${data.lots.filter((l) => !l.valued && dec(l.onHand).gt(0)).length} lotes pendientes de valorar`}
+              />
+            </div>
+          </details>
           {data.lots.some(lowStock) && (
             <div className="inventory-source-note">
               <span>
@@ -612,10 +654,11 @@ export default function InventoryWorkspace({
               <Search size={17} />
               <input
                 aria-label="Buscar material o código"
-                placeholder="Artículo, referencia, código, proveedor o estantería…"
+                placeholder="Nombre, alias, referencia, marca, proveedor…"
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
+                  if (!search.trim() && e.target.value.trim()) setFilter("all");
                   if (lotIdentifier(e.target.value)) setFilter("all");
                 }}
                 onKeyDown={(e) => {
@@ -637,52 +680,75 @@ export default function InventoryWorkspace({
               <option value="unpriced">Pendientes de precio</option>
               <option value="low">En mínimo de material libre</option>
             </select>
-            <select
-              aria-label="Ubicación del material"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-            >
-              <option value="">Todas las ubicaciones</option>
-              <option value="__empty">Sin ubicación</option>
-              {[...new Set(data.lots.map((l) => l.location).filter(Boolean))]
-                .sort()
-                .map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-            </select>
-            {data.isAdmin && (
-              <select
-                aria-label="Proveedor del material"
-                value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
+            <details className="inventory-more-filters">
+              <summary>Más filtros</summary>
+              <div>
+                <select
+                  aria-label="Ubicación del material"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                >
+                  <option value="">Todas las ubicaciones</option>
+                  <option value="__empty">Sin ubicación</option>
+                  {[
+                    ...new Set(
+                      data.lots.map((l) => l.location).filter(Boolean),
+                    ),
+                  ]
+                    .sort()
+                    .map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                </select>
+                {data.isAdmin && (
+                  <select
+                    aria-label="Proveedor del material"
+                    value={supplier}
+                    onChange={(e) => setSupplier(e.target.value)}
+                  >
+                    <option value="">Todos los proveedores</option>
+                    {[
+                      ...new Set(
+                        data.lots
+                          .map((l) => l.document?.supplier?.name)
+                          .filter((v): v is string => !!v),
+                      ),
+                    ]
+                      .sort()
+                      .map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                  </select>
+                )}
+                <select
+                  aria-label="Orden del material"
+                  value={order}
+                  onChange={(e) => setOrder(e.target.value)}
+                >
+                  <option value="newest">Más recientes</option>
+                  <option value="oldest">Más antiguos</option>
+                  <option value="name">Nombre del artículo</option>
+                </select>
+              </div>
+            </details>
+            {(search || location || supplier) && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSearch("");
+                  setLocation("");
+                  setSupplier("");
+                  setFilter("all");
+                  setOrder("newest");
+                }}
               >
-                <option value="">Todos los proveedores</option>
-                {[
-                  ...new Set(
-                    data.lots
-                      .map((l) => l.document?.supplier?.name)
-                      .filter((v): v is string => !!v),
-                  ),
-                ]
-                  .sort()
-                  .map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-              </select>
+                Limpiar filtros
+              </Button>
             )}
-            <select
-              aria-label="Orden del material"
-              value={order}
-              onChange={(e) => setOrder(e.target.value)}
-            >
-              <option value="newest">Más recientes</option>
-              <option value="oldest">Más antiguos</option>
-              <option value="name">Nombre del artículo</option>
-            </select>
             <Button
               className="inventory-scan-mobile"
               variant="outline"
@@ -773,10 +839,15 @@ export default function InventoryWorkspace({
                     href={lotHref(l.code)}
                     className="stock-card-title"
                   >
-                    {l.description}
+                    {l.alias || l.description}
                     <ArrowUpRight size={15} />
                   </Link>
                   <p className="stock-card-ref">
+                    {l.alias && (
+                      <span className="product-original-name">
+                        {l.description}
+                      </span>
+                    )}
                     {l.reference ? `Ref. ${l.reference}` : "Sin referencia"}
                     {l.brand && ` · ${l.brand}`}
                   </p>
@@ -798,6 +869,16 @@ export default function InventoryWorkspace({
                     <MapPin size={14} />
                     {l.location || "Sin ubicación asignada"}
                   </div>
+                  {data.isAdmin && (
+                    <div className="stock-recommendation">
+                      Venta recomendada{" "}
+                      <strong>
+                        {euro(l.recommendedPrice)}
+                        {l.recommendedPrice != null ? ` / ${l.unit}` : ""}
+                      </strong>
+                      <small>Coste + 30 % · sin IVA</small>
+                    </div>
+                  )}
                   {lowStock(l) && (
                     <div className="stock-low">
                       Material libre en el mínimo configurado
@@ -1150,6 +1231,7 @@ function EditLot({
             const f = new FormData(e.currentTarget);
             await save("stock-edit", {
               lotId: lot.id,
+              alias: f.get("alias"),
               location: f.get("location"),
               brand: f.get("brand"),
               model: f.get("model"),
@@ -1166,13 +1248,18 @@ function EditLot({
       >
         <div className="form-grid">
           {[
+            { name: "alias", label: "Alias del producto", value: lot.alias },
             { name: "location", label: "Ubicación", value: lot.location },
             { name: "brand", label: "Marca", value: lot.brand },
             { name: "model", label: "Modelo", value: lot.model },
           ].map((f) => (
             <label key={f.name}>
               {f.label}
-              <input name={f.name} defaultValue={f.value} />
+              <input
+                name={f.name}
+                defaultValue={f.value}
+                maxLength={f.name === "alias" ? 200 : undefined}
+              />
             </label>
           ))}
           <label>
@@ -1192,8 +1279,10 @@ function EditLot({
           </label>
         </div>
         <p className="small-note">
-          El mínimo 0 desactiva el aviso. Las cantidades se corrigen mediante
-          movimientos para conservar el historial.
+          El alias se utiliza al buscar y facturar, conservando el nombre del
+          proveedor. Se comparte entre lotes del mismo proveedor, referencia y
+          unidad. El mínimo 0 desactiva el aviso. Las cantidades se corrigen
+          mediante movimientos para conservar el historial.
         </p>
         {error && (
           <p className="error" role="alert">

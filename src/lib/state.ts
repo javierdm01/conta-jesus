@@ -98,7 +98,7 @@ export async function getState(u: Actor) {
         worker: true,
         costs: { where: { reversed: false } },
         hours: { include: { worker: { select: { id: true, name: true } } } },
-        sales: true,
+        sales: { include: { lines: true } },
         quotes: { orderBy: { createdAt: "desc" } },
         stockMovements: {
           where: { kind: "USE", amount: null },
@@ -114,7 +114,10 @@ export async function getState(u: Actor) {
         supplier: { select: { id: true, name: true } },
         replacedBy: { select: { id: true } },
         stockLots: stockSelect,
-        valuedLots: { distinct: ["documentId"], select: { document: { select: { id: true, number: true } } } },
+        valuedLots: {
+          distinct: ["documentId"],
+          select: { document: { select: { id: true, number: true } } },
+        },
       },
       orderBy: { createdAt: "desc" },
       take: 200,

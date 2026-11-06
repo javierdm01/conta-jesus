@@ -1,6 +1,7 @@
 import type { InventoryLot } from "./inventory-types";
 import { dec } from "./money";
 import { lotIdentifier } from "./inventory-math";
+import { matchesSearch } from "./product-search";
 
 export type InventoryFilters = {
   search: string;
@@ -29,19 +30,19 @@ export function filterInventory(
       (!filters.supplier || l.document?.supplier?.name === filters.supplier) &&
       (code
         ? l.code === code
-        : [
+        : matchesSearch(q, [
+            l.alias,
             l.description,
             l.reference,
             l.code,
             l.location,
             l.brand,
             l.model,
+            l.family,
+            l.notes,
             l.document?.supplier?.name,
             l.document?.number,
-          ]
-            .join(" ")
-            .toLocaleLowerCase("es")
-            .includes(q)) &&
+          ])) &&
       (filters.status === "all" ||
         (filters.status === "available" && dec(l.onHand).gt(0)) ||
         (filters.status === "free" && dec(l.available).gt(0)) ||
@@ -52,7 +53,11 @@ export function filterInventory(
   );
   return result.sort((a, b) =>
     filters.order === "name"
-      ? a.description.localeCompare(b.description, "es", { numeric: true })
+      ? (a.alias || a.description).localeCompare(
+          b.alias || b.description,
+          "es",
+          { numeric: true },
+        )
       : filters.order === "oldest"
         ? a.createdAt.localeCompare(b.createdAt) || a.code.localeCompare(b.code)
         : b.createdAt.localeCompare(a.createdAt) ||
@@ -71,6 +76,7 @@ export function inventoryCsv(lots: InventoryLot[], admin: boolean) {
   const header = [
     "Código",
     "Descripción",
+    "Alias",
     "Referencia",
     "Marca",
     "Modelo",
@@ -96,6 +102,7 @@ export function inventoryCsv(lots: InventoryLot[], admin: boolean) {
   const rows = lots.map((l) => [
     l.code,
     l.description,
+    l.alias,
     l.reference,
     l.brand,
     l.model,

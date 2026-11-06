@@ -314,6 +314,7 @@ model StockLot {
   invoiceDocumentId String?
   invoiceDocument   Document?          @relation("StockInvoice", fields: [invoiceDocumentId], references: [id])
   description       String
+  alias             String             @default("")
   reference         String             @default("")
   brand             String             @default("")
   model             String             @default("")
@@ -331,6 +332,7 @@ model StockLot {
   movements         StockMovement[]
   reservations      StockReservation[]
   counts            StockCount[]
+  saleLines         SaleLine[]
 
   @@index([companyId, createdAt])
   @@index([documentId])
@@ -424,8 +426,24 @@ model Sale {
   collected   Decimal   @default(0) @db.Decimal(14, 2)
   documentId  String?   @unique
   requestKey  String    @unique
+  lines       SaleLine[]
 
   @@unique([companyId, number])
+}
+
+model SaleLine {
+  id          String @id @default(cuid())
+  saleId      String
+  sale        Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  lotId       String?
+  lot         StockLot? @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  description String
+  unit        String
+  quantity    Decimal @db.Decimal(14, 4)
+  price       Decimal @db.Decimal(14, 4)
+  net         Decimal @db.Decimal(14, 2)
+  @@index([saleId])
+  @@index([lotId])
 }
 
 model Quote {

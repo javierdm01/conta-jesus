@@ -1,5 +1,9 @@
 # Plan de continuidad del ERP · revisión del 25 de octubre de 2026
 
+## Artículos y búsqueda · 06/11/2026
+
+Prioridad del usuario: alias, búsqueda general y filtros sencillos, diseño en teléfono/tablet/PC y recomendación de venta con un recargo del 30 % sobre coste. Se incorpora alias persistente, herencia entre recepciones del mismo proveedor/referencia/unidad, búsqueda normalizada por todos los datos del artículo, recomendación dinámica coste × 1,30 y líneas de factura con concepto y precio guardados. Manual en [ARTICULOS_Y_BUSQUEDA.md](ARTICULOS_Y_BUSQUEDA.md). Se mantiene pendiente un catálogo maestro que permita vincular de forma revisable referencias de proveedores diferentes; no se unen por similitud de nombre.
+
 ## Interacción simplificada · 29/10/2026
 
 Inicio y Documentos ofrecen una sola entrada por tarea: **Subir albarán** y **Subir factura de proveedor**. El tipo viene elegido; foto/archivo son las decisiones principales. La asignación previa a trabajo y el cambio de tipo quedan desplegables. Tras subir se muestran los pendientes. Las tareas secundarias siguen en **Más acciones**; los accesos repetidos del inicio y de Documentos se han eliminado.

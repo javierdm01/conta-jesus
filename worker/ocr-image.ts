@@ -3,6 +3,7 @@ import { layoutWords } from "../src/lib/ocr-layout";
 import sharp from "sharp";
 import { readTableCells } from "./ocr-cells";
 import { tabularText } from "./ocr-tabular";
+import { fillEmptyCells } from "./ocr-gaps";
 import { parseOcr } from "../src/lib/ocr";
 import { cents, documentLineNet, sum } from "../src/lib/money";
 
@@ -23,11 +24,9 @@ export async function ocrImage(
       psm,
       "tsv",
     ]);
-    return {
-      file,
-      tsv,
-      text: cells ? await readTableCells(file, tsv, run) : tabularText(tsv),
-    };
+    if (cells) return { file, tsv, text: await readTableCells(file, tsv, run) };
+    const filled = await fillEmptyCells(file, tsv, run);
+    return { file, tsv: filled, text: tabularText(filled) };
   };
   const score = (text: string) => {
     const s = parseOcr(text, [], kind);
@@ -40,11 +39,8 @@ export async function ocrImage(
           s.lines.map((l) => documentLineNet(l.quantity, l.price, l.discount)),
         ),
       ) === s.net;
-    return (
-      s.lines.length * 10 +
-      (balanced ? 20 : 0) +
-      [s.number, s.date, s.net, s.tax].filter(Boolean).length * 2
-    );
+    // Los metadatos ausentes se recuperan después de otra variante; no deben decidir qué líneas se leen mejor.
+    return s.lines.length * 10 + (balanced ? 20 : 0);
   };
   const candidates: { file: string; tsv: string; text: string }[] = [];
   const prepared = path.join(
@@ -163,6 +159,12 @@ export async function ocrImage(
       corrected.length === word.text.length
     )
       best = best.replace(word.text, corrected);
+  }
+  // Un borde de tabla puede tapar los primeros dígitos de un código; otra variante lo lee completo.
+  const words = [...new Set(candidates.flatMap((c) => layoutWords(c.tsv).map((w) => w.text)))];
+  for (const r of references) {
+    const longer = words.filter((t) => t.length > r.length && t.length <= r.length + 4 && t.endsWith(r) && /^[A-Z0-9]+$/.test(t));
+    if (longer.length === 1) best = best.replace(new RegExp(`(?<![A-Z0-9,.])${r}(?![A-Z0-9])`, "g"), longer[0]);
   }
   // Recuperar solo metadatos ausentes de otra segmentación de la MISMA página.
   const main = parseOcr(best, [], kind);

@@ -4,6 +4,7 @@ import { db } from "./db";
 import { admin, accessibleJob, AppError, type Actor } from "./access";
 import * as v from "./validation";
 import { cents, dec, lineNet, documentLineNet, quotePrice, sum } from "./money";
+import { quantityForUnit } from "./inventory-math";
 import { inventoryOperation } from "./inventory";
 import { purchaseOrderOperation } from "./purchase-orders";
 import { userOperation } from "./users";
@@ -284,6 +285,18 @@ export async function operate(u: Actor, action: string, input: unknown) {
         collected: v.money,
         requestKey: v.requestKey,
         documentId: v.id.optional(),
+        lines: z
+          .array(
+            z.object({
+              lotId: v.id,
+              description: v.name,
+              quantity: v.quantity,
+              price: v.price,
+            }),
+          )
+          .min(1)
+          .max(100)
+          .optional(),
       })
       .parse(input);
     await accessibleJob(u, d.jobId);
@@ -295,6 +308,29 @@ export async function operate(u: Actor, action: string, input: unknown) {
         "Revisa la retención o el cobro: superan el importe permitido.",
       );
     return serial(async (tx) => {
+      const saleLines = [];
+      for (const l of d.lines ?? []) {
+        const lot = await tx.stockLot.findFirst({
+          where: { id: l.lotId, companyId },
+          select: { unit: true },
+        });
+        if (!lot)
+          throw new AppError("Uno de los artículos no está disponible.", 404);
+        try {
+          quantityForUnit(l.quantity, lot.unit);
+        } catch (e) {
+          throw new AppError((e as Error).message);
+        }
+        saleLines.push({
+          ...l,
+          unit: lot.unit,
+          net: lineNet(l.quantity, l.price),
+        });
+      }
+      if (saleLines.length && !sum(saleLines.map((l) => l.net)).eq(d.net))
+        throw new AppError(
+          "Las líneas de artículos no coinciden con la base de la factura.",
+        );
       if (d.documentId) {
         const doc = await tx.document.findFirst({
           where: {
@@ -320,6 +356,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
       const row = await tx.sale.create({
         data: {
           ...d,
+          lines: saleLines.length ? { create: saleLines } : undefined,
           number: d.number.trim().toUpperCase(),
           companyId,
           date: new Date(d.date),
