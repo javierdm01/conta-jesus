@@ -1,5 +1,6 @@
 import { lineNet, documentLineNet, dec, sum, cents } from "./money";
 import { matchSupplier, type SupplierCandidate } from "./supplier-match";
+import type { Evidence } from "./ocr-evidence";
 export type OcrSuggestion = {
   number?: string;
   date?: string;
@@ -24,6 +25,7 @@ export type OcrSuggestion = {
     observedUnitPrice?: string;
   }[];
   warnings: string[];
+  evidence?: Evidence;
 };
 function numeric(s: string): string | undefined {
   const clean = s

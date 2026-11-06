@@ -13,6 +13,10 @@
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "test:integration": "node --env-file-if-exists=.env --import tsx tests/integration.ts",
+    "test:pages": "node --env-file-if-exists=.env --import tsx tests/pages-integration.ts",
+    "test:delete": "node --env-file-if-exists=.env --import tsx tests/document-delete-integration.ts",
+    "test:review-visual": "node --env-file-if-exists=.env --import tsx tests/review-visual-browser.ts",
+    "test:tablet": "node --env-file-if-exists=.env --import tsx tests/tablet-layout-browser.ts",
     "test:quarters": "node --env-file-if-exists=.env --import tsx tests/quarters-integration.ts",
     "test:inventory": "node --env-file-if-exists=.env --import tsx tests/inventory-integration.ts"
   },

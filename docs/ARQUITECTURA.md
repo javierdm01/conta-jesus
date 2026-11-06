@@ -69,3 +69,11 @@ Referencias técnicas: [layouts persistentes de Next.js](https://nextjs.org/docs
 - `src/lib/quarters.ts` calcula el informe del trimestre (fechas UTC de documento): ventas por fecha de venta, compras por fecha de **factura de compra confirmada**, gastos generales con IVA y mano de obra a coste histórico. `src/lib/zip.ts` genera el ZIP en streaming sin cargar los archivos en memoria. `src/app/api/quarters/route.ts` expone JSON, CSV y ZIP solo al responsable.
 - Interfaz: `src/components/quarters.tsx`, cargado de forma diferida desde el panel (`/trimestres`).
 - Modelo: `Overhead.tax`. Las compras fiscales se leen de `Document` (PURCHASE confirmada), no de `Cost`, para no mezclar IVA con consumo en obra.
+
+## Páginas escaneadas y coordenadas (revisión visual)
+
+El worker (`worker/index.ts`) genera por página una imagen «tipo escáner» (`scripts/prepare-ocr.py --scan`, vía `worker/scan-page.ts`): recorte del papel con corrección de perspectiva, enderezado, igualado del fondo y reducción a 2500 px. Se guarda en `DOCUMENT_DIR/scans/<documento>-p<n>.jpg`; el original es inmutable. El OCR trabaja sobre esa imagen.
+
+Cada página se registra en `DocumentPage` (imagen, tamaño, calidad `ok`/`fallback` y palabras con recuadro en fracciones 0–1). Las palabras salen de `pdftotext -bbox-layout` en PDF con texto nativo y del TSV de Tesseract en el resto (`src/lib/ocr-words.ts`). `src/lib/ocr-evidence.ts` empareja cada valor de la sugerencia con sus palabras (preferencia por la cercanía a su etiqueta; ambigüedad ⇒ `approx`) y lo guarda en `suggestion.evidence`. `src/lib/evidence-boxes.ts` lo convierte en recuadros para `document-viewer.tsx`.
+
+API: `GET /api/documents/[id]/pages` y `/pages/[n]/image` (mismos permisos que el original). Eliminación: operación `document-delete` (`src/lib/document-delete.ts`), solo para documentos sin confirmar y sin líneas, costes ni lotes.

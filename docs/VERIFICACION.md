@@ -181,3 +181,14 @@ La primera versión no implementa anulación general de registros confirmados, r
 ## Pruebas reproducibles
 
 `npm test`: fórmulas de margen, redondeo, unidades/cantidades, costes, ausencia de ingresos, impuestos, fechas y entradas inválidas. `npm run typecheck`: TypeScript. `npm run build`: compilación optimizada. `npm run test:integration`: HTTP real con PostgreSQL, OCR de una imagen de prueba, confirmación, sustitución de albarán, horas, venta, cobro y comprobación de roles; requiere servidor y worker.
+
+## Revisión visual de documentos, imagen tipo escáner y eliminación de subidas (1–2 de noviembre de 2026)
+
+Resultados ejecutados (Docker, PostgreSQL y OCR reales; datos de prueba retirados al terminar):
+
+- `npm run typecheck` sin errores y `npm test`: 78/78 (incluye `ocr-words`, `ocr-evidence`, `evidence-boxes`, `scan-page`, `document-delete` y `uuid`). Compilación de producción dentro de la imagen Docker correcta; migraciones aplicadas.
+- Integración en el contenedor: `test:integration` (con PDF real), `test:inventory` (pedidos, PDF mixto, varias entregas por factura), `test:quarters`, `test:pages`, `test:delete` y `tests/users-integration.ts`: todas correctas.
+- Navegador: `test:review-visual` (recuadros etiquetados, foco campo↔recuadro, documento sin páginas, eliminar y volver a subir) y `test:tablet` (960×540, 1024×600 y 1280×800: sin desplazamiento horizontal, barra lateral ≤ 64 px, visor ≈ 45 %, controles ≥ 44 px).
+- OCR, imagen escaneada frente a original sobre cuatro muestras (tres con lectura humana de referencia): sin mejora en las ya limpias y un dato peor (fecha de la oferta 9466) cuando no se detecta papel. Por eso el worker lee la imagen original cuando la escaneada es `fallback`; la escaneada solo se muestra. **No medido todavía con fotos torcidas o con sombras.**
+- Correcciones halladas al probar: `crypto.randomUUID` no existe con `http://IP` (ahora `src/lib/uuid.ts`, con prueba) y el diseño de tablet no cubría 1280×800 (límite de altura 820 px).
+- Pendiente: medir el OCR con fotos reales difíciles y valores de referencia.

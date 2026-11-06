@@ -202,6 +202,7 @@ model Document {
   createdAt    DateTime       @default(now())
   confirmedAt  DateTime?
   lines        DocumentLine[]
+  pages        DocumentPage[]
   costs        Cost[]
   stockLots    StockLot[]     @relation("StockReceipt")
   valuedLots   StockLot[]     @relation("StockInvoice")
@@ -209,6 +210,20 @@ model Document {
   @@unique([companyId, hash])
   @@unique([companyId, kind, supplierId, number])
   @@index([status, availableAt])
+}
+
+model DocumentPage {
+  id           String   @id @default(cuid())
+  documentId   String
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  page         Int
+  scanFilename String
+  width        Int
+  height       Int
+  words        Json
+  scanQuality  String   @default("ok")
+
+  @@unique([documentId, page])
 }
 
 model DocumentLine {

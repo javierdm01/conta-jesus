@@ -84,7 +84,34 @@ def prepare_photo(image, destination):
         raise ValueError("No se pudo guardar la preparación OCR")
 
 
+def scan_page(source, destination):
+    """Imagen tipo escaneo para mostrar y leer: recorta el papel, endereza y quita sombras."""
+    image = cv2.imread(source, cv2.IMREAD_GRAYSCALE)
+    if image is None or image.size > 40_000_000:
+        raise ValueError("Imagen no válida o demasiado grande")
+    rectified = page_on_dark_background(image)
+    quality = 'ok' if rectified.shape != image.shape else 'fallback'
+    temporary = str(Path(destination).with_suffix('.tmp.png'))
+    try:
+        prepare_photo(rectified, temporary)
+        output = cv2.imread(temporary, cv2.IMREAD_GRAYSCALE)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    height, width = output.shape
+    longest = max(height, width)
+    if longest > 2500:
+        factor = 2500 / longest
+        output = cv2.resize(output, (round(width * factor), round(height * factor)), interpolation=cv2.INTER_AREA)
+        height, width = output.shape
+    if not cv2.imwrite(destination, output, [cv2.IMWRITE_JPEG_QUALITY, 85]):
+        raise ValueError("No se pudo guardar la imagen escaneada")
+    print(json.dumps({'width': width, 'height': height, 'quality': quality}))
+
+
 def main():
+    if sys.argv[1] == '--scan':
+        scan_page(*sys.argv[2:4])
+        return
     source, destination = sys.argv[1:3]
     image = cv2.imread(source, cv2.IMREAD_GRAYSCALE)
     if image is None or image.size > 40_000_000:

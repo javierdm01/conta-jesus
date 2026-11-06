@@ -7,6 +7,7 @@ import { cents, dec, lineNet, documentLineNet, quotePrice, sum } from "./money";
 import { inventoryOperation } from "./inventory";
 import { purchaseOrderOperation } from "./purchase-orders";
 import { userOperation } from "./users";
+import { deleteDocuments } from "./document-delete";
 
 type Tx = Prisma.TransactionClient;
 const audit = (tx: Tx, u: Actor, action: string, entityId: string) =>
@@ -37,6 +38,8 @@ export async function operate(u: Actor, action: string, input: unknown) {
   if (action.startsWith("order-"))
     return purchaseOrderOperation(u, action, input);
   if (action.startsWith("user-")) return userOperation(u, action, input);
+  // Técnicos y responsable; las reglas de propiedad se comprueban dentro.
+  if (action === "document-delete") return deleteDocuments(u, input);
   if (
     ["customer", "supplier", "customerUpdate", "supplierUpdate"].includes(
       action,

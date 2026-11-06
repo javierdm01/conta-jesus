@@ -1,4 +1,5 @@
 "use client";
+import { uuid } from "@/lib/uuid";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
@@ -8,13 +9,14 @@ import {
   Package,
   Plus,
   Trash2,
-  Download,
   Check,
   ArrowRight,
 } from "lucide-react";
 import { Dialog } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { SupplierPicker } from "../supplier-picker";
+import DocumentViewer from "./document-viewer";
+import { boxesFromEvidence } from "@/lib/evidence-boxes";
 import type { Doc, State } from "@/lib/workspace-types";
 import { cents, dec, sum, documentLineNet } from "@/lib/money";
 import { receiptReconciliationLines } from "@/lib/receipt-reconciliation";
@@ -66,7 +68,7 @@ export default function StockDocumentReview({
     },
   );
   const blank = (): Line => ({
-    key: crypto.randomUUID(),
+    key: uuid(),
     description: "",
     reference: "",
     quantity: "",
@@ -117,7 +119,20 @@ export default function StockDocumentReview({
         : [blank()],
     ),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [active, setActive] = useState<string>();
+  const boxes = boxesFromEvidence(doc.suggestion?.evidence);
+  // Enfocar un recuadro lleva el cursor a su campo (número, fecha, base, IVA, proveedor o celda de línea).
+  const focusField = (id: string) => {
+    const m = id.match(/^line-(\d+)-(\w+)$/);
+    const el = document.querySelector<HTMLElement>(
+      m ? `[data-line="${m[1]}"] [data-field="${m[2]}"]` : `[data-field="${id}"]`,
+    );
+    const target = el?.matches("input,select,textarea") ? el : el?.querySelector<HTMLElement>("input,select,textarea");
+    target?.focus();
+    target?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setActive(id);
+  };
   const receipts = s.documents.filter(
     (d) =>
       d.kind === "DELIVERY" &&
@@ -169,6 +184,13 @@ export default function StockDocumentReview({
       }}
     >
       <form
+        onFocus={(e) => {
+          const t = e.target as HTMLElement;
+          const f = t.closest<HTMLElement>("[data-field]");
+          if (!f) return;
+          const line = t.closest<HTMLElement>("[data-line]")?.dataset.line;
+          setActive(line !== undefined ? `line-${line}-${f.dataset.field}` : f.dataset.field);
+        }}
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
@@ -228,6 +250,38 @@ export default function StockDocumentReview({
           }
         }}
       >
+        <div className="review-split">
+      <div className="review-original">
+        <DocumentViewer
+          documentId={doc.id}
+          boxes={boxes}
+          activeId={active}
+          onSelect={focusField}
+        />
+        <details className="simple-options mt-3">
+          <summary>Ver texto leído y avisos</summary>
+          {doc.mime?.startsWith("image/") && (
+            <p className="small-note mt-2">
+              La imagen mostrada es una versión preparada («tipo escáner»);
+              el archivo original no se modifica.
+            </p>
+          )}
+          <pre className="ocr-text">
+            {doc.text ||
+              "No se ha podido leer el texto. Completa los campos comprobando el original."}
+          </pre>
+          <p className="small-note mt-3">
+            Las propuestas OCR necesitan revisión. Comprueba especialmente
+            referencias, unidades y cantidades.
+          </p>
+          {doc.suggestion?.warnings.map((w, i) => (
+            <p className="small-note mt-2" key={i}>
+              {w}
+            </p>
+          ))}
+        </details>
+      </div>
+        <div className="review-main">
         <p className="small-note mb-4">
           Comprueba los datos del documento y los artículos. El material y los
           costes se registrarán cuando pulses el botón de guardar.
@@ -283,45 +337,10 @@ export default function StockDocumentReview({
           </div>
         </div>
         <div className="review-grid simple-review-grid">
-          <details className="simple-options review-original">
-            <summary>Ver documento original y datos leídos</summary>
-            <a
-              className="text-button inline-flex gap-2"
-              href={`/api/documents/${doc.id}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Download size={16} />
-              Abrir original
-            </a>
-            {doc.mime?.startsWith("image/") && (
-              <img
-                src={`/api/documents/${doc.id}`}
-                alt="Factura original para comprobar los datos"
-                className="w-full rounded-xl mt-3"
-                loading="lazy"
-              />
-            )}
-            <details className="mt-3">
-              <summary className="text-button">Ver texto del OCR</summary>
-              <pre className="ocr-text">
-                {doc.text ||
-                  "No se ha podido leer el texto. Completa los campos comprobando el original."}
-              </pre>
-            </details>
-            <p className="small-note mt-3">
-              Las propuestas OCR necesitan revisión. Comprueba especialmente
-              referencias, unidades y cantidades.
-            </p>
-            {doc.suggestion?.warnings.map((w, i) => (
-              <p className="small-note mt-2" key={i}>
-                {w}
-              </p>
-            ))}
-          </details>
           <div>
             <h3 className="review-step">1. Proveedor y documento</h3>
             <div className="form-grid">
+              <div className="contents" data-field="supplier">
               <SupplierPicker
                 suppliers={s.suppliers}
                 value={supplier}
@@ -337,10 +356,12 @@ export default function StockDocumentReview({
                   );
                 }}
               />
+              </div>
               <label>
                 Número del documento
                 <input
                   name="number"
+                  data-field="number"
                   defaultValue={doc.suggestion?.number ?? ""}
                   required
                   maxLength={200}
@@ -351,6 +372,7 @@ export default function StockDocumentReview({
                 <input
                   type="date"
                   name="date"
+                  data-field="date"
                   defaultValue={doc.suggestion?.date ?? ""}
                   required
                 />
@@ -359,6 +381,7 @@ export default function StockDocumentReview({
                 Base neta (€)
                 <input
                   name="net"
+                  data-field="net"
                   type="number"
                   min="0"
                   step="0.01"
@@ -372,6 +395,7 @@ export default function StockDocumentReview({
                 Impuestos (€)
                 <input
                   name="tax"
+                  data-field="tax"
                   type="number"
                   min="0"
                   step="0.01"
@@ -477,7 +501,7 @@ export default function StockDocumentReview({
           </span>
         </div>
         {lines.map((l, index) => (
-          <div className="stock-review-line" key={l.key}>
+          <div className="stock-review-line" key={l.key} data-line={index}>
             <div className="flex justify-between mb-3">
               <strong className="small-note">ARTÍCULO {index + 1}</strong>
               {l.receiptNumber && (
@@ -577,6 +601,7 @@ export default function StockDocumentReview({
               <label>
                 Descripción
                 <input
+                  data-field="description"
                   required
                   value={l.description}
                   onChange={(e) => update(l.key, "description", e.target.value)}
@@ -592,6 +617,7 @@ export default function StockDocumentReview({
               <label>
                 Cantidad recibida
                 <input
+                  data-field="quantity"
                   type="number"
                   min={l.financial ? "-999999" : "0.0001"}
                   step="0.0001"
@@ -604,6 +630,7 @@ export default function StockDocumentReview({
               <label>
                 Unidad
                 <select
+                  data-field="unit"
                   value={l.unit}
                   disabled={destination === "RECONCILE"}
                   onChange={(e) => update(l.key, "unit", e.target.value)}
@@ -617,6 +644,7 @@ export default function StockDocumentReview({
                 <label>
                   Precio unitario indicado (opcional)
                   <input
+                    data-field="price"
                     type="number"
                     min="0"
                     step="0.0001"
@@ -634,6 +662,7 @@ export default function StockDocumentReview({
                   <label>
                     Precio por unidad (€)
                     <input
+                      data-field="price"
                       type="number"
                       min="0"
                       step="0.0001"
@@ -645,6 +674,7 @@ export default function StockDocumentReview({
                   <label>
                     Descuento (%)
                     <input
+                      data-field="discount"
                       type="number"
                       min="0"
                       max="100"
@@ -831,6 +861,8 @@ export default function StockDocumentReview({
               <Check size={16} />
             )}
           </Button>
+        </div>
+        </div>
         </div>
       </form>
     </Dialog>

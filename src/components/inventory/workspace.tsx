@@ -1,4 +1,5 @@
 "use client";
+import { uuid } from "@/lib/uuid";
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -979,7 +980,7 @@ function MovementForm({
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [requestKey] = useState(() => crypto.randomUUID());
+    [requestKey] = useState(() => uuid());
   const returns = lot.movements.filter(
     (m) => m.kind === "USE" && dec(m.returnable).gt(0) && m.job,
   );

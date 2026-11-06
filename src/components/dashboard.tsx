@@ -1,4 +1,5 @@
 "use client";
+import { uuid } from "@/lib/uuid";
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -242,6 +243,8 @@ export function Dashboard({
     [sort, setSort] = useState("gross");
   const router = useRouter();
   const [documentView, setDocumentView] = useState("all");
+  const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
+  const [deletingDocs, setDeletingDocs] = useState(false);
   const [openingReview, setOpeningReview] = useState<string | null>(null);
   const {
     data: state,
@@ -851,12 +854,71 @@ export function Dashboard({
       setOpeningReview(null);
     }
   };
+  // Eliminar subidas sin confirmar; el servidor decide qué se puede borrar y explica el resto.
+  const removeDocuments = async (ids: string[], what: string) => {
+    if (
+      !window.confirm(
+        `¿Eliminar ${what}? Se borrarán también el archivo original y las imágenes preparadas. Esta acción no se puede deshacer.`,
+      )
+    )
+      return;
+    setDeletingDocs(true);
+    try {
+      const r = await request("/api/operations/document-delete", { ids });
+      setSelectedDocs([]);
+      setToast(
+        r.blocked?.length
+          ? `Eliminados ${r.deleted.length}. No se pudo eliminar: ${r.blocked.map((b: { reason: string }) => b.reason).join(" ")}`
+          : r.deleted.length === 1
+            ? "Documento eliminado."
+            : `Eliminados ${r.deleted.length} documentos.`,
+      );
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDeletingDocs(false);
+    }
+  };
   const docsTable = (docs: Doc[], pending = false) =>
     docs.length ? (
       <div className="record-list">
+        {selectedDocs.some((id) => docs.some((d) => d.id === id)) && (
+          <div className="doc-selection">
+            <strong>{selectedDocs.length} seleccionado(s)</strong>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={deletingDocs}
+              onClick={() =>
+                removeDocuments(selectedDocs, `${selectedDocs.length} documento(s)`)
+              }
+            >
+              <Trash2 size={16} /> Eliminar seleccionados
+            </Button>
+            <button className="text-button" onClick={() => setSelectedDocs([])}>
+              Quitar selección
+            </button>
+          </div>
+        )}
         {docs.map((d) => (
           <div className="record document-record" key={d.id}>
-            <div>
+            {d.status !== "CONFIRMED" && (
+              <label className="doc-select">
+                <input
+                  type="checkbox"
+                  aria-label={`Seleccionar ${d.number ?? d.originalName}`}
+                  checked={selectedDocs.includes(d.id)}
+                  disabled={deletingDocs}
+                  onChange={(e) =>
+                    setSelectedDocs((cur) =>
+                      e.target.checked ? [...cur, d.id] : cur.filter((x) => x !== d.id),
+                    )
+                  }
+                />
+              </label>
+            )}
+            <div className="document-record-main">
               <a
                 className="job-link"
                 href={`/api/documents/${d.id}`}
@@ -922,6 +984,17 @@ export function Dashboard({
                   onClick={() => run("retry", { documentId: d.id })}
                 >
                   <RefreshCw size={16} />
+                </button>
+              )}
+              {d.status !== "CONFIRMED" && (
+                <button
+                  className="doc-delete"
+                  aria-label={`Eliminar ${d.number ?? d.originalName}`}
+                  title={d.status === "PROCESSING" ? "Se está leyendo ahora mismo" : "Eliminar subida"}
+                  disabled={deletingDocs || d.status === "PROCESSING"}
+                  onClick={() => removeDocuments([d.id], `«${d.number ?? d.originalName}»`)}
+                >
+                  <Trash2 size={16} /> Eliminar
                 </button>
               )}
             </div>
@@ -2680,7 +2753,7 @@ function OperationForm({
     ),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [key] = useState(() => crypto.randomUUID());
+    [key] = useState(() => uuid());
   let preview = "";
   if (modal.action === "quote") {
     try {

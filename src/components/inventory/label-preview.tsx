@@ -1,4 +1,5 @@
 "use client";
+import { uuid } from "@/lib/uuid";
 import { useState, useEffect } from "react";
 import {
   Printer,
@@ -169,7 +170,7 @@ export default function LabelPreview({ labels }: { labels: Label[] }) {
                   return;
                 }
                 const profile = {
-                  id: existing?.id ?? crypto.randomUUID(),
+                  id: existing?.id ?? uuid(),
                   name,
                   settings: { ...settings },
                   showLocation,

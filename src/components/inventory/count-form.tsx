@@ -1,4 +1,5 @@
 "use client";
+import { uuid } from "@/lib/uuid";
 import { useState } from "react";
 import { Dialog } from "../ui/dialog";
 import { Button } from "../ui/button";
@@ -18,7 +19,7 @@ export default function CountForm({
     [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const [requestKey] = useState(() => crypto.randomUUID());
+  const [requestKey] = useState(() => uuid());
   const valid = /^\d+(\.\d{1,4})?$/.test(counted);
   const difference = valid ? dec(counted).minus(lot.onHand).toString() : null;
   return (

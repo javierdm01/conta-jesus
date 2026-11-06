@@ -72,3 +72,19 @@ Criterio: las compras cuentan por la fecha de la **factura** confirmada (no por 
 ## Lectura de facturas (OCR)
 
 El proveedor se elige primero por NIF exacto y, si no aparece, por el nombre más parecido (tolera letras mal leídas); en ese caso se avisa con el porcentaje de parecido. Se reconocen fechas con año corto o en letra, número de factura con distintas etiquetas, base/IVA/total (el IVA o la base que falten se calculan solo si cuadran y se avisa) y tablas Base/%/Cuota. Si una página no deja líneas legibles se reintenta con otro modo de lectura. Todo sigue pasando por revisión humana antes de confirmarse.
+
+## Revisar un documento con el original al lado
+
+Al pulsar **Revisar**, a la izquierda verás la página del documento como si estuviera escaneada (se recorta el papel, se endereza y se quitan sombras; el archivo original no se modifica) y a la derecha el formulario.
+
+- Cada dato localizado lleva un **recuadro con su nombre** (Nº documento, Fecha, Proveedor, Base, IVA, Total y, en las líneas, Descripción, Cantidad, Precio…). El color ayuda, pero la etiqueta siempre está escrita.
+- Un recuadro con **borde discontinuo y «≈»** es aproximado: el valor aparece más de una vez o no se pudo situar con seguridad. Compruébalo con el papel.
+- Si tocas un campo, su recuadro se resalta y la imagen se centra en él. Si tocas un recuadro, el cursor pasa a su campo.
+- Con los botones **+ / −**, la rueda con Ctrl o el pellizco puedes acercar; arrastra para moverte. **Ocultar recuadros** deja la imagen limpia.
+- Un dato sin recuadro sigue siendo editable. Los documentos subidos antes de esta función muestran «No hay imagen preparada» y el enlace al original.
+
+## Eliminar subidas
+
+En la bandeja de documentos, cada subida **sin confirmar** (en cola, en revisión, fallida o fotografía) tiene el botón **Eliminar**; con las casillas puedes eliminar varias. Se borran el registro, el archivo original y las imágenes preparadas, y queda anotado en el registro de cambios. Después puedes volver a subir el mismo archivo.
+
+No se pueden eliminar documentos **ya confirmados** (afectan al almacén y a la contabilidad) ni los que se están leyendo en ese momento. Un técnico solo puede eliminar sus propias subidas sin confirmar.

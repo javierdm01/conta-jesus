@@ -10,6 +10,8 @@ La tercera iteración mejora el OCR (proveedor por NIF o nombre más parecido, f
 
 La revisión de continuidad contrasta Graphify con el código y completa pruebas de pedidos parciales, perfiles de etiquetas, estado del sistema y Trimestres. El paquete trimestral comprueba que los originales existen antes de descargar y mantiene nombres únicos coincidentes con sus CSV. Para generar y verificar una copia desde Windows: `powershell -File scripts/backup-now.ps1`.
 
+La revisión de documentos muestra ahora la página como escaneada junto al formulario, con recuadros etiquetados de dónde sale cada dato, y permite eliminar subidas sin confirmar. Pruebas nuevas: `npm run test:pages`, `npm run test:delete`, `npm run test:review-visual`, `npm run test:tablet`.
+
 ## Servidor de producción
 
 Con HTTPS, comprobaciones de salud, copias con retención y actualización guiada: [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md) (`bash scripts/deploy.sh`).

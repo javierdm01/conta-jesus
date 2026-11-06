@@ -1,4 +1,5 @@
 "use client";
+import { uuid } from "@/lib/uuid";
 import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
@@ -306,7 +307,7 @@ function OrderForm({
   saved: () => Promise<void>;
 }) {
   const blank = () => ({
-    key: crypto.randomUUID(),
+    key: uuid(),
     description: "",
     reference: "",
     quantity: "",
@@ -317,7 +318,7 @@ function OrderForm({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [supplierId, setSupplierId] = useState("");
-  const [requestKey] = useState(() => crypto.randomUUID());
+  const [requestKey] = useState(() => uuid());
   return (
     <Dialog
       open
