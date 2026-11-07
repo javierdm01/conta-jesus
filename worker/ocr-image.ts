@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { readTableCells } from "./ocr-cells";
 import { tabularText } from "./ocr-tabular";
 import { fillEmptyCells } from "./ocr-gaps";
+import { readFiscalBox } from "./ocr-footer";
 import { parseOcr } from "../src/lib/ocr";
 import { cents, documentLineNet, sum } from "../src/lib/money";
 
@@ -106,12 +107,15 @@ export async function ocrImage(
     const s=parseOcr(fiscal,[],kind);
     if(s.net && s.tax && s.total && sum([s.net,s.tax]).eq(s.total)) {
       for(const c of candidates) c.text+=`\nBase imponible: ${s.net}\nCuota IVA: ${s.tax}\nTotal documento: ${s.total}`;
+    } else {
+      const totals=[...new Set([s.total,...candidates.map(c=>parseOcr(c.text,[],kind).total)].filter(Boolean))];
+      const box=totals.length===1 ? await readFiscalBox(footer,totals[0]!,run) : null;
+      if(box) for(const c of candidates) c.text+=`\nBase imponible: ${box.net}\nCuota IVA: ${box.tax}\nTotal documento: ${totals[0]}`;
     }
   }
-  if (candidates.every((c) => incomplete(c.text)))
-    candidates.push(
-      await read(preparation.variants[1], "6", preparation.screen,preparation.screen?"eng":"spa+eng"),
-    );
+  // La variante binaria también aporta códigos completos cuando un borde de tabla tapa dígitos.
+  const binary = await read(preparation.variants[1], "6", preparation.screen, preparation.screen ? "eng" : "spa+eng");
+  if (candidates.every((c) => incomplete(c.text))) candidates.push(binary);
   const winner = candidates.reduce((a, b) =>
     score(b.text) > score(a.text) ? b : a,
   );
@@ -161,7 +165,7 @@ export async function ocrImage(
       best = best.replace(word.text, corrected);
   }
   // Un borde de tabla puede tapar los primeros dígitos de un código; otra variante lo lee completo.
-  const words = [...new Set(candidates.flatMap((c) => layoutWords(c.tsv).map((w) => w.text)))];
+  const words = [...new Set([...candidates, binary].flatMap((c) => layoutWords(c.tsv).map((w) => w.text)))];
   for (const r of references) {
     const longer = words.filter((t) => t.length > r.length && t.length <= r.length + 4 && t.endsWith(r) && /^[A-Z0-9]+$/.test(t));
     if (longer.length === 1) best = best.replace(new RegExp(`(?<![A-Z0-9,.])${r}(?![A-Z0-9])`, "g"), longer[0]);
