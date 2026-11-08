@@ -248,9 +248,14 @@ async function main() {
       ).status(),
       404,
     );
-    await a.admin.post("/api/operations/stock-edit", {
-      data: { ...payload, alias: "Enchufe salón actualizado" },
-    });
+    assert.equal((await a.admin.post("/api/operations/stock-edit", {
+      data: { lotId: lot.id, alias: "Enchufe salón actualizado" },
+    })).status(), 200);
+    const edited = await db.stockLot.findUniqueOrThrow({ where: { id: lot.id } });
+    assert.equal(edited.code, lot.code);
+    assert.equal(edited.location, payload.location);
+    assert.equal(edited.brand, payload.brand);
+    assert.equal(edited.model, payload.model);
     const snapshot = await db.saleLine.findFirstOrThrow({
       where: { saleId: invoice.id },
     });

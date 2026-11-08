@@ -5,6 +5,7 @@ import { AppError } from "./access";
 import { db } from "./db";
 import { cents, dec, sum } from "./money";
 import { csvCell } from "./inventory-view";
+import { EXPENSE_LABEL } from "./expenses";
 import { safeName, type ZipEntry } from "./zip";
 
 export type Period = { year: number; quarter: 1 | 2 | 3 | 4 };
@@ -66,6 +67,7 @@ export async function quarterReport(companyId: string, period: Period) {
       }),
       db.overhead.findMany({
         where: { companyId, date: between },
+        include: { document: { select: { filename: true, mime: true } } },
         orderBy: { date: "asc" },
       }),
       db.timeEntry.findMany({
@@ -184,10 +186,14 @@ export async function quarterReport(companyId: string, period: Period) {
       mime: s.documentId ? (fileById.get(s.documentId)?.mime ?? null) : null,
     })),
     overheads: overheads.map((o) => ({
+      id: o.id,
       date: day(o.date),
       description: o.description,
+      category: o.category,
       net: money(o.amount),
       tax: money(o.tax),
+      file: o.document?.filename ?? null,
+      mime: o.document?.mime ?? null,
     })),
   };
 }
@@ -287,12 +293,16 @@ export function quarterCsvs(r: QuarterReport) {
       ]),
     ]),
     "gastos_generales.csv": csv([
-      ["Fecha", "Descripción", "Base", "IVA"],
+      ["Fecha", "Categoría", "Descripción", "Base", "IVA", "Justificante"],
       ...r.overheads.map((o) => [
         o.date,
+        EXPENSE_LABEL[o.category] ?? o.category,
         o.description,
         comma(o.net),
         comma(o.tax),
+        o.file
+          ? archiveName("gastos", EXPENSE_LABEL[o.category] ?? o.category, o.date, o.description, o.mime ?? "", o.id)
+          : "sin justificante",
       ]),
     ]),
   };
@@ -327,6 +337,12 @@ export async function quarterZip(
       ),
       file: path.join(/* turbopackIgnore: true */ dir, path.basename(d.file)),
     });
+  for (const o of r.overheads)
+    if (o.file)
+      entries.push({
+        name: archiveName("gastos", EXPENSE_LABEL[o.category] ?? o.category, o.date, o.description, o.mime ?? "", o.id),
+        file: path.join(/* turbopackIgnore: true */ dir, path.basename(o.file)),
+      });
   const files = await db.document.findMany({
     where: {
       companyId,

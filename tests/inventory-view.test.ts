@@ -12,6 +12,7 @@ const lot: InventoryLot = {
   code: "LT-1234567890ABCD",
   description: "Cable; cobre",
   alias: "",
+  archivedAt: null,
   reference: "CAB-1",
   brand: "Marca",
   model: "Modelo",

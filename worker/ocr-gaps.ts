@@ -3,7 +3,7 @@ import sharp from "sharp";
 import { layoutRows } from "../src/lib/ocr-layout";
 
 type Run = (command: string, args: string[]) => Promise<string>;
-const num = (t: string) => /^-?\d+[.,]\d{1,6}$/.test(t.replace(/[€\s)|}\]]/g, ""));
+const num = (t: string) => /^-?\d+[.,]\d{1,6}$/.test(t.replace(/[^\d.,-]/g, "").replace(/[.,]+$/, ""));
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9]/gi, "").toUpperCase();
 
 type Rows = ReturnType<typeof layoutRows>;

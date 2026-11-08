@@ -46,7 +46,7 @@ async function main(){
   await post(a,"review",review);assert.equal((await state(a)).jobs.find((j:{id:string})=>j.id===job.id).metrics.direct,"915.00");
   const twice=await a.post("/api/operations/review",{data:review});assert.equal(twice.status(),409);
   console.log("OK OCR real, revisión obligatoria, sumas, archivo duplicado y sustitución sin doble coste");
-  await post(t,"hours",{jobId:job.id,workerId:worker.id,date:"2026-10-18",hours:"8",activity:"Instalación",billable:true});
+  await post(t,"hours",{jobId:job.id,workerId:worker.id,date:"2026-10-18",startTime:"08:00",endTime:"16:00",activity:"Instalación",billable:true});
   await post(a,"workerUpdate",{id:worker.id,name:"Técnico PRUEBA",hourlyCost:"40",specialty:"Climatización"});
   await post(a,"cost",{jobId:job.id,type:"Desplazamiento",description:"Viaje PRUEBA",amount:"45"});
   const q=await post(a,"quote",{jobId:job.id,name:"Presupuesto PRUEBA",materials:"915",hours:"8",hourlyCost:"30",travel:"45",subcontract:"0",other:"0",overhead:"0",margin:"35"});assert.equal(q.net,"1846.15");await post(a,"approveQuote",{quoteId:q.id});
@@ -55,7 +55,7 @@ async function main(){
   assert.equal(metrics.net,"1850.00");assert.equal(metrics.direct,"1200.00");assert.equal(metrics.gross,"650.00");assert.equal(metrics.margin,"35.1");assert.equal(metrics.collected,"0.00");assert.equal(metrics.pending,"2238.50");
   await post(a,"payment",{saleId:sale.id,collected:"2238.50"});metrics=(await state(a)).jobs.find((j:{id:string})=>j.id===job.id).metrics;assert.equal(metrics.gross,"650.00");assert.equal(metrics.pending,"0.00");assert.equal(metrics.collected,"2238.50");
   const denied=await t.post("/api/operations/sale",{data:{}});assert.equal(denied.status(),403);
-  const otherJob=await t.post("/api/operations/hours",{data:{jobId:hidden.id,workerId:worker.id,date:"2026-10-18",hours:"1",activity:"Instalación",billable:true,requestKey:randomUUID()}});assert.equal(otherJob.status(),404);
+  const otherJob=await t.post("/api/operations/hours",{data:{jobId:hidden.id,workerId:worker.id,date:"2026-10-18",startTime:"09:00",endTime:"10:00",activity:"Instalación",billable:true,requestKey:randomUUID()}});assert.equal(otherJob.status(),404);
   const technician=await state(t);assert.equal(technician.jobs.length,1);assert.equal(technician.jobs[0].metrics,undefined);assert.equal(technician.jobs[0].hours[0].hourlyCost,undefined);assert.equal(technician.workers[0].hourlyCost,undefined);assert.equal(technician.sales.length,0);
   const badOrigin=await a.post("/api/operations/company",{headers:{Origin:"https://origen-no-permitido.invalid"},data:{name:"Ataque"}});assert.equal(badOrigin.status(),403);
   const unsafe=await a.post("/api/documents",{multipart:{kind:"PURCHASE",file:{name:"factura.jpg",mimeType:"image/jpeg",buffer:Buffer.from("<html><script>alert(1)</script></html>")}}});assert.equal(unsafe.status(),400);

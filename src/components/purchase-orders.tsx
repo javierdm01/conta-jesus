@@ -1,4 +1,5 @@
 "use client";
+import { ListSkeleton } from "./skeletons";
 import { uuid } from "@/lib/uuid";
 import { useState } from "react";
 import Link from "next/link";
@@ -108,7 +109,7 @@ export default function PurchaseOrders({
           <option value="all">Todos los pedidos</option>
         </select>
       </div>
-      {!data && !error && <p role="status">Cargando pedidos…</p>}
+      {!data && !error && <ListSkeleton />}
       {data && !orders.length && (
         <div className="empty">
           <ShoppingCart size={30} />

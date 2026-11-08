@@ -166,6 +166,13 @@ export async function inventoryOperation(
       throw new AppError(
         "Valora todas las líneas o deja todos los precios pendientes.",
       );
+    // Un albarán no tiene por qué imprimir importe final: la base se toma de sus propias líneas.
+    if (
+      priced &&
+      d.net == null &&
+      (await db.document.findFirst({ where: { id: d.documentId, companyId: u.companyId }, select: { kind: true } }))?.kind === "DELIVERY"
+    )
+      d.net = cents(sum(d.lines.map((l) => documentLineNet(l.quantity, l.price!, l.discount))));
     if (
       priced &&
       (d.net == null ||
@@ -537,6 +544,54 @@ export async function inventoryOperation(
       return { id: doc.id };
     });
   }
+  // Mismo artículo (referencia + proveedor + unidad) en varios lotes: el uso gasta siempre el más antiguo primero.
+  // shortcut: cada tramo es su propia transacción y los tramos extra no son idempotentes ante reintentos; atomizar si hace falta.
+  const raw = input as { lotId?: string; kind?: string; quantity?: string; jobId?: string; fifo?: boolean };
+  if (action === "stock-move" && raw.kind === "USE" && !raw.fifo && raw.lotId && raw.quantity) {
+    const first = await db.stockLot.findFirst({
+      where: { id: raw.lotId, companyId: u.companyId },
+      include: { document: { select: { supplierId: true } } },
+    });
+    const supplierId = first?.document?.supplierId;
+    if (first?.reference && supplierId) {
+      const siblings = await db.stockLot.findMany({
+        where: {
+          companyId: u.companyId,
+          archivedAt: null,
+          onHand: { gt: 0 },
+          reference: { equals: first.reference, mode: "insensitive" },
+          unit: first.unit,
+          document: { supplierId },
+        },
+        include: { reservations: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      let left = dec(raw.quantity);
+      const parts: { lotId: string; quantity: string }[] = [];
+      for (const s of siblings) {
+        const own = s.reservations.find((r) => r.jobId === raw.jobId);
+        const free = dec(s.onHand.toString())
+          .minus(sum(s.reservations.map((r) => r.quantity.toString())))
+          .plus(own?.quantity.toString() ?? 0);
+        const take = free.lt(left) ? free : left;
+        if (take.gt(0)) parts.push({ lotId: s.id, quantity: take.toString() });
+        left = left.minus(take);
+        if (left.lte(0)) break;
+      }
+      // Si no alcanza, el flujo normal devuelve el error de "no hay suficiente material".
+      if (left.lte(0) && (parts.length > 1 || parts[0]?.lotId !== first.id)) {
+        let result: unknown;
+        for (const [i, p] of parts.entries())
+          result = await inventoryOperation(u, action, {
+            ...raw,
+            ...p,
+            fifo: true,
+            requestKey: i ? randomUUID() : (input as { requestKey: string }).requestKey,
+          });
+        return result;
+      }
+    }
+  }
   if (action === "stock-move") {
     const d = z
       .object({
@@ -566,6 +621,8 @@ export async function inventoryOperation(
         include: { reservations: true },
       });
       if (!lot) throw new AppError("Artículo no disponible.", 404);
+      if (lot.archivedAt && d.kind !== "RETURN")
+        throw new AppError("El artículo está retirado. Recupéralo para moverlo.", 409);
       try {
         quantityForUnit(d.quantity, lot.unit);
       } catch (e) {
@@ -692,6 +749,8 @@ export async function inventoryOperation(
         },
       });
       if (!lot) throw new AppError("Artículo no disponible.", 404);
+      if (lot.archivedAt)
+        throw new AppError("El artículo está retirado. Recupéralo para contarlo.", 409);
       if (
         !dec(lot.onHand.toString()).eq(d.expected) ||
         (lot.movements[0]?.id ?? null) !== d.lastMovementId
@@ -785,11 +844,12 @@ export async function inventoryOperation(
       .object({
         lotId: v.id,
         alias: z.string().trim().max(200).optional(),
-        location: v.text,
-        brand: v.text,
-        model: v.text,
-        notes: v.text,
-        minimum: v.quantity.or(z.literal("0")),
+        description: v.name.optional(),
+        location: z.string().trim().max(2000).optional(),
+        brand: z.string().trim().max(2000).optional(),
+        model: z.string().trim().max(2000).optional(),
+        notes: z.string().trim().max(2000).optional(),
+        minimum: v.quantity.or(z.literal("0")).optional(),
       })
       .parse(input);
     return serial(async (tx) => {
@@ -815,13 +875,24 @@ export async function inventoryOperation(
       return { id: lot.id };
     });
   }
+  if (action === "stock-archive" || action === "stock-restore") {
+    admin(u);
+    const { lotId } = z.object({ lotId: v.id }).parse(input);
+    return serial(async (tx) => {
+      const lot = await tx.stockLot.findFirst({ where: { id: lotId, companyId: u.companyId } });
+      if (!lot) throw new AppError("Artículo no disponible.", 404);
+      await tx.stockLot.update({ where: { id: lot.id }, data: { archivedAt: action === "stock-archive" ? new Date() : null } });
+      await audit(tx, u, action === "stock-archive" ? "Retirar artículo del catálogo" : "Recuperar artículo del catálogo", lot.id);
+      return { id: lot.id };
+    });
+  }
   throw new AppError("Acción de almacén desconocida.", 404);
 }
 
 export async function inventoryState(u: Actor) {
   const adminRole = u.role === "ADMIN";
   const lots = await db.stockLot.findMany({
-    where: { companyId: u.companyId },
+    where: { companyId: u.companyId, ...(!adminRole ? { archivedAt: null } : {}) },
     include: {
       counts: adminRole
         ? { orderBy: [{ createdAt: "desc" }, { id: "desc" }] }
@@ -863,6 +934,7 @@ export async function inventoryState(u: Actor) {
         code: l.code,
         description: l.description,
         alias: l.alias,
+        archivedAt: l.archivedAt,
         reference: l.reference,
         brand: l.brand,
         model: l.model,

@@ -1,5 +1,13 @@
 # Plan de continuidad del ERP · revisión del 25 de octubre de 2026
 
+## Facturación y presupuestos sencillos · 07/11/2026
+
+Clientes dispone ahora de un apartado propio accesible desde el menú y desde el móvil, con alta, edición y búsqueda. Los clientes guardados se pueden seleccionar al crear trabajos. La selección o creación directamente en el nuevo formulario de factura y presupuesto sigue pendiente de ese nuevo flujo.
+
+Prioridad solicitada: crear facturas y presupuestos desde un flujo corto, sin exigir un trabajo o pedido previo; buscar o crear el cliente en el mismo formulario; añadir conceptos libres o artículos por alias; calcular y revisar impuestos; ofrecer plantillas y exportación a PDF. Mantener instantáneas de cliente, conceptos y precios, numeración y permisos de empresa, y conservar la compatibilidad con los registros existentes. Comprobar los datos fiscales necesarios antes de emitir: escribir solo un nombre puede servir para preparar un borrador, pero no garantiza que sea una factura completa.
+
+El acceso a Pedidos se ha retirado del menú sin borrar registros. El alias se puede editar directamente desde la ficha del lote; su identificador de etiqueta es independiente del nombre. Sigue pendiente el flujo nuevo de facturas y presupuestos, las plantillas PDF, edición de un precio de venta persistente, y validar el escaneo con cámara en un móvil real. La cámara del navegador requiere un contexto seguro, normalmente HTTPS.
+
 ## Artículos y búsqueda · 06/11/2026
 
 Prioridad del usuario: alias, búsqueda general y filtros sencillos, diseño en teléfono/tablet/PC y recomendación de venta con un recargo del 30 % sobre coste. Se incorpora alias persistente, herencia entre recepciones del mismo proveedor/referencia/unidad, búsqueda normalizada por todos los datos del artículo, recomendación dinámica coste × 1,30 y líneas de factura con concepto y precio guardados. Manual en [ARTICULOS_Y_BUSQUEDA.md](ARTICULOS_Y_BUSQUEDA.md). Se mantiene pendiente un catálogo maestro que permita vincular de forma revisable referencias de proveedores diferentes; no se unen por similitud de nombre.

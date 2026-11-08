@@ -1,7 +1,10 @@
 "use client";
+import { Spinner } from "@/components/ui/spinner";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { Download, Eye, EyeOff, Minus, Plus } from "lucide-react";
+import { Columns3, Crop, Download, Eye, EyeOff, Minus, Plus } from "lucide-react";
+import type { Word } from "@/lib/ocr-words";
+import { pickRows, type Rect } from "@/lib/pick-text";
 import { FIELD_LABEL, type FieldKind, type ViewerBox } from "@/lib/evidence-boxes";
 import { FIELD_COLOR } from "./evidence-style";
 
@@ -19,17 +22,30 @@ export default function DocumentViewer({
   boxes,
   activeId,
   onSelect,
+  onPick,
+  target,
 }: {
   documentId: string;
   boxes: ViewerBox[];
   activeId?: string;
   onSelect?: (id: string) => void;
+  /** Texto de la zona dibujada, una cadena por fila; `column` si se pidió rellenar todas las filas. */
+  onPick?: (rows: string[], column: boolean) => void;
+  /** Campo que recibirá la selección (para el aviso). */
+  target?: string;
 }) {
   const { data, error } = useSWR(`/api/documents/${documentId}/pages`, fetcher);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [show, setShow] = useState(true);
   const [imageError, setImageError] = useState(false);
+  const [mode, setMode] = useState<"off" | "field" | "column">("off");
+  const [draft, setDraft] = useState<Rect | null>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const { data: withWords } = useSWR<{ pages: (PageMeta & { words: Word[] })[] }>(
+    mode === "off" ? null : `/api/documents/${documentId}/pages?words=1`,
+    fetcher as never,
+  );
   const stage = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ distance: number; zoom: number } | null>(null);
@@ -65,7 +81,7 @@ export default function DocumentViewer({
         </a>
       </div>
     );
-  if (!data) return <div className="doc-viewer-empty">Cargando documento…</div>;
+  if (!data) return <div className="doc-viewer-empty"><div className="skeleton" style={{ width: "100%", height: "60vh", borderRadius: 12 }} role="status" aria-label="Cargando documento" /></div>;
   if (!meta)
     return (
       <div className="doc-viewer-empty">
@@ -91,6 +107,16 @@ export default function DocumentViewer({
         <button type="button" aria-pressed={show} onClick={() => setShow((s) => !s)}>
           {show ? <EyeOff size={18} /> : <Eye size={18} />} {show ? "Ocultar recuadros" : "Ver recuadros"}
         </button>
+        {onPick && (
+          <>
+            <button type="button" aria-pressed={mode === "field"} onClick={() => setMode((m) => (m === "field" ? "off" : "field"))}>
+              <Crop size={18} /> Seleccionar texto
+            </button>
+            <button type="button" aria-pressed={mode === "column"} onClick={() => setMode((m) => (m === "column" ? "off" : "column"))}>
+              <Columns3 size={18} /> Seleccionar columna
+            </button>
+          </>
+        )}
         {pages.length > 1 && (
           <select aria-label="Página" value={meta.page} onChange={(e) => setPage(Number(e.target.value))}>
             {pages.map((p) => <option key={p.page} value={p.page}>Página {p.page}</option>)}
@@ -98,6 +124,16 @@ export default function DocumentViewer({
         )}
         <a href={`/api/documents/${documentId}`} target="_blank" rel="noreferrer" aria-label="Abrir original"><Download size={18} /></a>
       </div>
+      {mode !== "off" && (
+        <p className="small-note doc-viewer-note" role="status">
+          {target
+            ? mode === "column"
+              ? `Dibuja un recuadro sobre toda la columna: se rellenará «${target}» en cada artículo, fila a fila.`
+              : `Dibuja un recuadro sobre el texto que va en «${target}».`
+            : "Primero pulsa el campo del formulario que quieres rellenar y luego dibuja el recuadro."}
+          {!withWords && <><Spinner /> Cargando texto…</>}
+        </p>
+      )}
       {meta.scanQuality === "fallback" && (
         <p className="small-note doc-viewer-note">No se detectó el contorno del papel; se muestra sin recortar.</p>
       )}
@@ -112,7 +148,7 @@ export default function DocumentViewer({
         onPointerDown={(e) => {
           pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
           if (pointers.current.size === 2) gesture.current = { distance: distance(), zoom };
-          else if (e.pointerType === "mouse" && stage.current)
+          else if (mode === "off" && e.pointerType === "mouse" && stage.current)
             drag.current = { x: e.clientX, y: e.clientY, left: stage.current.scrollLeft, top: stage.current.scrollTop };
         }}
         onPointerMove={(e) => {
@@ -136,7 +172,37 @@ export default function DocumentViewer({
           drag.current = null;
         }}
       >
-        <div className="doc-viewer-page" style={{ width: `${zoom * 100}%`, aspectRatio: `${meta.width} / ${meta.height}` }}>
+        <div
+          className="doc-viewer-page"
+          style={{ width: `${zoom * 100}%`, aspectRatio: `${meta.width} / ${meta.height}`, cursor: mode === "off" ? undefined : "crosshair", touchAction: mode === "off" ? undefined : "none" }}
+          onPointerDown={(e) => {
+            if (mode === "off") return;
+            e.stopPropagation();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            const r = e.currentTarget.getBoundingClientRect();
+            start.current = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+            setDraft([start.current.x, start.current.y, 0, 0]);
+          }}
+          onPointerMove={(e) => {
+            if (!start.current) return;
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect(), a = start.current;
+            const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+            setDraft([Math.min(a.x, x), Math.min(a.y, y), Math.abs(x - a.x), Math.abs(y - a.y)]);
+          }}
+          onPointerUp={(e) => {
+            if (!start.current) return;
+            e.stopPropagation();
+            start.current = null;
+            const rect = draft;
+            setDraft(null);
+            const words = withWords?.pages.find((p) => p.page === meta.page)?.words;
+            if (rect && rect[2] > 0.005 && rect[3] > 0.003 && words) {
+              const rows = pickRows(words, rect);
+              if (rows.length) onPick?.(rows, mode === "column");
+            }
+          }}
+        >
           {imageError ? (
             <p className="error m-4" role="alert">La imagen de esta página ya no está en el servidor. Usa «Abrir original».</p>
           ) : (
@@ -147,6 +213,9 @@ export default function DocumentViewer({
               onError={() => setImageError(true)}
             />
           )}
+          {draft && (
+            <div className="doc-box active" style={{ left: `${draft[0] * 100}%`, top: `${draft[1] * 100}%`, width: `${draft[2] * 100}%`, height: `${draft[3] * 100}%`, ["--box-color" as string]: "#0f766e", pointerEvents: "none" }} />
+          )}
           {show && !imageError &&
             visible.map((b) => (
               <button
@@ -156,6 +225,7 @@ export default function DocumentViewer({
                 style={{
                   left: `${b.box[0] * 100}%`, top: `${b.box[1] * 100}%`,
                   width: `${b.box[2] * 100}%`, height: `${b.box[3] * 100}%`,
+                  pointerEvents: mode === "off" ? undefined : "none",
                   ["--box-color" as string]: FIELD_COLOR[b.kind],
                 }}
                 aria-label={`${b.label}${b.approx ? " (aproximado)" : ""}`}

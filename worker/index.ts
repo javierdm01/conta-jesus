@@ -5,6 +5,8 @@ import { mkdir, mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
+import { Worker } from "bullmq";
+import { redisConnection } from "../src/lib/queue";
 import { parseOcr } from "../src/lib/ocr";
 import { ocrImage } from "./ocr-image";
 import { scanPage } from "./scan-page";
@@ -275,21 +277,45 @@ ${scanned.trim() ? scanned : native}`;
   }
   return true;
 }
-async function main() {
-  console.log("Procesador OCR local iniciado");
+// Varios documentos a la vez: cada bucle toma el siguiente de la cola (FOR UPDATE SKIP LOCKED evita repetirlos).
+// Redis despierta a los bucles al instante; sin Redis siguen sondeando la base de datos cada pocos segundos.
+const waiters: (() => void)[] = [];
+const wakeAll = () => waiters.splice(0).forEach((w) => w());
+const idle = (ms: number) =>
+  new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    waiters.push(() => {
+      clearTimeout(t);
+      resolve();
+    });
+  });
+async function loop(index: number) {
   while (!stopping) {
     try {
-      if (Date.now() - lastHeartbeat > 15000) await heartbeat();
-      if (Date.now() - lastPrune > 3600000) {
-        lastPrune = Date.now();
-        await pruneFailed(path.resolve(process.env.DOCUMENT_DIR ?? "data/documents"));
+      if (index === 0) {
+        if (Date.now() - lastHeartbeat > 15000) await heartbeat();
+        if (Date.now() - lastPrune > 3600000) {
+          lastPrune = Date.now();
+          await pruneFailed(path.resolve(process.env.DOCUMENT_DIR ?? "data/documents"));
+        }
       }
-      if (!(await processNext())) await new Promise((r) => setTimeout(r, 2000));
+      if (!(await processNext())) await idle(index === 0 ? 2000 : 4000);
     } catch (e) {
       console.error("Cola OCR no disponible", e);
-      await new Promise((r) => setTimeout(r, 5000));
+      await idle(5000);
     }
   }
+}
+async function main() {
+  const concurrency = Math.max(1, Math.min(6, Number(process.env.OCR_CONCURRENCY ?? 2) || 2));
+  const connection = redisConnection();
+  const redis = connection
+    ? new Worker("ocr", async () => wakeAll(), { connection: { ...connection, maxRetriesPerRequest: null } })
+    : null;
+  redis?.on("error", (e) => console.error("Redis no disponible:", e.message));
+  console.log(`Procesador OCR iniciado · ${concurrency} en paralelo${redis ? " · Redis" : ""}`);
+  await Promise.all(Array.from({ length: concurrency }, (_, i) => loop(i)));
+  await redis?.close();
   await db.$disconnect();
 }
 main().catch((e) => {

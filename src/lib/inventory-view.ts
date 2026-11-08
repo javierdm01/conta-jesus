@@ -12,7 +12,7 @@ export type InventoryFilters = {
   receiptId?: string | null;
 };
 export function lowStock(lot: InventoryLot) {
-  return dec(lot.minimum).gt(0) && dec(lot.available).lte(lot.minimum);
+  return !lot.archivedAt && dec(lot.minimum).gt(0) && dec(lot.available).lte(lot.minimum);
 }
 export function filterInventory(
   lots: InventoryLot[],
@@ -22,6 +22,7 @@ export function filterInventory(
   const q = filters.search.trim().toLocaleLowerCase("es");
   const result = lots.filter(
     (l) =>
+      (filters.status === "archived" ? !!l.archivedAt : !l.archivedAt) &&
       (!filters.receiptId || l.document?.id === filters.receiptId) &&
       (!filters.location ||
         (filters.location === "__empty"
@@ -43,7 +44,7 @@ export function filterInventory(
             l.document?.supplier?.name,
             l.document?.number,
           ])) &&
-      (filters.status === "all" ||
+      (filters.status === "archived" || filters.status === "all" ||
         (filters.status === "available" && dec(l.onHand).gt(0)) ||
         (filters.status === "free" && dec(l.available).gt(0)) ||
         (filters.status === "reserved" && dec(l.reserved).gt(0)) ||

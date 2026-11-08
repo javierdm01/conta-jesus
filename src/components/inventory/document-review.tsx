@@ -17,6 +17,7 @@ import { Button } from "../ui/button";
 import { SupplierPicker } from "../supplier-picker";
 import DocumentViewer from "./document-viewer";
 import { boxesFromEvidence } from "@/lib/evidence-boxes";
+import { fieldValue } from "@/lib/pick-text";
 import type { Doc, State } from "@/lib/workspace-types";
 import { cents, dec, sum, documentLineNet } from "@/lib/money";
 import { receiptReconciliationLines } from "@/lib/receipt-reconciliation";
@@ -133,6 +134,39 @@ export default function StockDocumentReview({
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
     setActive(id);
   };
+  // Selección dibujada sobre el documento: rellena el campo enfocado (o toda la columna, fila a fila).
+  const FIELD_NAME: Record<string, string> = {
+    number: "Número del documento", date: "Fecha", net: "Base neta", tax: "Impuestos",
+    description: "Descripción", reference: "Referencia", brand: "Marca", quantity: "Cantidad",
+    price: "Precio", discount: "Descuento", location: "Ubicación",
+  };
+  const activeLine = active?.match(/^line-(\d+)-(\w+)$/);
+  const activeField = activeLine ? activeLine[2] : active;
+  const targetLabel = activeField && FIELD_NAME[activeField]
+    ? `${FIELD_NAME[activeField]}${activeLine ? ` · artículo ${Number(activeLine[1]) + 1}` : ""}`
+    : undefined;
+  const pick = (rows: string[], column: boolean) => {
+    if (!activeField || !FIELD_NAME[activeField]) return;
+    if (!activeLine) {
+      const el = document.querySelector<HTMLInputElement>(`input[data-field="${activeField}"]`);
+      const value = fieldValue(activeField, rows.join(" "));
+      if (!el || el.disabled || !value) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    const first = Number(activeLine[1]);
+    const values = (column ? rows : [rows.join(" ")]).map((r) => fieldValue(activeField, r));
+    setLines((prev) => {
+      const next = [...prev];
+      values.forEach((v, k) => {
+        if (!v) return;
+        while (next.length <= first + k) next.push(blank());
+        next[first + k] = { ...next[first + k], [activeField]: v };
+      });
+      return next;
+    });
+  };
   const receipts = s.documents.filter(
     (d) =>
       d.kind === "DELIVERY" &&
@@ -146,6 +180,8 @@ export default function StockDocumentReview({
       rows.map((l) => (l.key === key ? { ...l, [k]: value } : l)),
     );
   const unknown = destination === "STOCK" && unpriced;
+  // Un albarán recibido en almacén no necesita importe final: se calcula de sus líneas.
+  const noTotals = doc.kind === "DELIVERY" && destination === "STOCK";
   let total = "0.00";
   try {
     total = cents(
@@ -208,8 +244,8 @@ export default function StockDocumentReview({
               supplierId: supplier,
               number: form.get("number"),
               date: form.get("date"),
-              net: unknown ? null : form.get("net"),
-              tax: unknown ? null : form.get("tax"),
+              net: unknown || noTotals ? null : form.get("net"),
+              tax: unknown || noTotals ? null : form.get("tax"),
               supersedesId: source || undefined,
               receiptIds: destination === "RECONCILE" ? receiptIds : undefined,
               valuationPending: unknown,
@@ -257,6 +293,8 @@ export default function StockDocumentReview({
           boxes={boxes}
           activeId={active}
           onSelect={focusField}
+          onPick={pick}
+          target={targetLabel}
         />
         <details className="simple-options mt-3">
           <summary>Ver texto leído y avisos</summary>
@@ -377,6 +415,8 @@ export default function StockDocumentReview({
                   required
                 />
               </label>
+              {!noTotals && (
+                <>
               <label>
                 Base neta (€)
                 <input
@@ -405,6 +445,8 @@ export default function StockDocumentReview({
                   onChange={(e) => setTax(e.target.value)}
                 />
               </label>
+                </>
+              )}
               {doc.kind === "DELIVERY" && destination === "STOCK" && (
                 <label className="full check-panel">
                   <input
@@ -481,7 +523,7 @@ export default function StockDocumentReview({
             )}
           </div>
         </div>
-        {!unknown && (
+        {!unknown && !noTotals && (
           <div className="info-banner my-4">
             <div>
               <strong>
@@ -610,6 +652,7 @@ export default function StockDocumentReview({
               <label>
                 Referencia del proveedor
                 <input
+                  data-field="reference"
                   value={l.reference}
                   onChange={(e) => update(l.key, "reference", e.target.value)}
                 />
@@ -735,6 +778,7 @@ export default function StockDocumentReview({
                         <label>
                           Ubicación en almacén
                           <input
+                            data-field="location"
                             placeholder="Estantería, cajón, furgoneta…"
                             value={l.location}
                             onChange={(e) =>
@@ -745,6 +789,7 @@ export default function StockDocumentReview({
                         <label>
                           Marca (opcional)
                           <input
+                            data-field="brand"
                             value={l.brand}
                             onChange={(e) =>
                               update(l.key, "brand", e.target.value)

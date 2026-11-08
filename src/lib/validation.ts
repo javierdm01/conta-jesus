@@ -46,6 +46,7 @@ export const name = z.string().trim().min(1).max(200),
   text = z.string().trim().max(2000).default("");
 export const id = z.string().min(1).max(100),
   requestKey = z.string().uuid();
+export const expenseCategories = ["AUTONOMO", "SEGURO", "VEHICULO", "COMBUSTIBLE", "DIETAS", "OTHER"] as const;
 export const statuses = [
   "Pendiente de presupuesto",
   "Presupuestado",

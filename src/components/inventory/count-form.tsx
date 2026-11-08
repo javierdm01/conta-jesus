@@ -124,7 +124,7 @@ export default function CountForm({
           >
             Cancelar
           </Button>
-          <Button disabled={busy || !valid}>
+          <Button loading={busy} disabled={!valid}>
             {busy ? "Guardando…" : "Confirmar recuento"}
           </Button>
         </div>

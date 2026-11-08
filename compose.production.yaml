@@ -6,6 +6,8 @@ x-logging: &logging
 services:
   db:
     logging: *logging
+  redis:
+    logging: *logging
   migrate:
     logging: *logging
   web:

@@ -1,0 +1,1 @@
+ALTER TABLE "StockLot" ADD COLUMN "archivedAt" TIMESTAMP(3);

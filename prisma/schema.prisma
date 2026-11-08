@@ -27,6 +27,8 @@ model Company {
   stockLots      StockLot[]
   stockMovements StockMovement[]
   purchaseOrders PurchaseOrder[]
+  catalogItems   CatalogItem[]
+  invoiceTemplates InvoiceTemplate[]
 }
 
 model User {
@@ -206,6 +208,7 @@ model Document {
   costs        Cost[]
   stockLots    StockLot[]     @relation("StockReceipt")
   valuedLots   StockLot[]     @relation("StockInvoice")
+  overheads    Overhead[]
 
   @@unique([companyId, hash])
   @@unique([companyId, kind, supplierId, number])
@@ -315,6 +318,7 @@ model StockLot {
   invoiceDocument   Document?          @relation("StockInvoice", fields: [invoiceDocumentId], references: [id])
   description       String
   alias             String             @default("")
+  archivedAt        DateTime?
   reference         String             @default("")
   brand             String             @default("")
   model             String             @default("")
@@ -407,6 +411,8 @@ model TimeEntry {
   activity   String
   billable   Boolean  @default(true)
   notes      String   @default("")
+  startTime  String   @default("")
+  endTime    String   @default("")
   requestKey String   @unique
 }
 
@@ -426,6 +432,7 @@ model Sale {
   collected   Decimal   @default(0) @db.Decimal(14, 2)
   documentId  String?   @unique
   requestKey  String    @unique
+  notes       String    @default("")
   lines       SaleLine[]
 
   @@unique([companyId, number])
@@ -441,6 +448,7 @@ model SaleLine {
   unit        String
   quantity    Decimal @db.Decimal(14, 4)
   price       Decimal @db.Decimal(14, 4)
+  discount    Decimal @default(0) @db.Decimal(5, 2)
   net         Decimal @db.Decimal(14, 2)
   @@index([saleId])
   @@index([lotId])
@@ -469,6 +477,11 @@ model Overhead {
   amount      Decimal  @db.Decimal(14, 2)
   tax         Decimal  @default(0) @db.Decimal(14, 2)
   date        DateTime
+  category    String   @default("OTHER")
+  documentId  String?
+  document    Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, date])
 }
 
 model Audit {
@@ -553,4 +566,34 @@ model SyncTask {
   payload     Json
   attempts    Int      @default(0)
   availableAt DateTime @default(now())
+}
+
+// Base de conocimiento de materiales para presupuestos (no es el almacén).
+model CatalogItem {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  reference   String   @default("")
+  description String
+  brand       String   @default("")
+  unit        String   @default("ud")
+  price       Decimal  @db.Decimal(14, 4)
+  supplier    String   @default("")
+  supplierRef String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([companyId, reference])
+  @@index([companyId, supplier, supplierRef])
+}
+
+// Plantillas de líneas de factura reutilizables.
+model InvoiceTemplate {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  name      String
+  lines     Json
+  createdAt DateTime @default(now())
+
+  @@index([companyId])
 }

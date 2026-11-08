@@ -10,18 +10,16 @@ const context=await browser.newContext({viewport:{width:390,height:844}}),page=a
 page.on('pageerror',e=>errors.push(e.message));
 try{
   await page.goto(`${base}/login`);await page.getByLabel('Correo electrónico').fill(f.email);await page.getByLabel('Contraseña',{exact:true}).fill(f.password);await page.getByRole('button',{name:'Entrar a mi empresa'}).click();await page.getByRole('heading',{name:'Todo bajo control.'}).waitFor();
-  assert.equal(await page.getByRole('button',{name:'Subir albarán',exact:true}).count(),1);
+  assert.equal(await page.getByRole('button',{name:'Subir albarán',exact:true}).count(),0); // Inicio ya no repite el botón: se sube desde «Crear»
   await page.goto(`${base}/facturas`);
   await page.getByRole('heading',{name:'Albaranes y facturas',exact:true}).waitFor();
   for(const label of ['Subir albarán','Subir factura de proveedor'])assert.equal(await page.getByRole('button',{name:label,exact:true}).count(),1);
   assert.equal(await page.getByRole('button',{name:'Subir documento',exact:true}).count(),0);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:'data/ocr-sonepar/documentos-sencillos-movil.png'});
-  await page.getByRole('button',{name:'Más acciones',exact:true}).click();
-  const menu=page.getByRole('dialog',{name:'¿Qué necesitas hacer?'});await menu.waitFor();
-  assert.equal(await menu.getByRole('button',{name:'Crear proveedor',exact:true}).isVisible(),false);
-  await menu.locator('summary').filter({hasText:'Trabajos, contactos y otras acciones'}).click();
-  assert.equal(await menu.getByRole('button',{name:'Crear proveedor',exact:true}).isVisible(),true);
+  await page.getByRole('button',{name:'Crear',exact:true}).click();
+  const menu=page.getByRole('dialog',{name:'¿Qué quieres hacer?'});await menu.waitFor();
+  for(const t of ['Subir albarán','Subir factura de proveedor','Nuevo trabajo','Cliente','Proveedor'])assert.equal(await menu.getByRole('button',{name:t,exact:true}).isVisible(),true);
   await menu.getByRole('button',{name:'Cerrar',exact:true}).click();
   for(const item of [
     {kind:'DELIVERY',button:'Subir albarán',dialog:'Subir albarán',file:'C:/Users/javie/Descargas/FACTURAS PRUEBA/26-10-27 22-15-09 9468.jpg',lines:2,number:'27-69173'},

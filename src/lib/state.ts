@@ -1,3 +1,4 @@
+import type { TemplateLine } from "./workspace-types";
 import { db } from "./db";
 import { type Actor } from "./access";
 import { cents, dec, profitability, sum } from "./money";
@@ -77,6 +78,7 @@ export async function getState(u: Actor) {
       sales: [],
       overheads: [],
       audits: [],
+      templates: [],
     };
   }
   const [
@@ -89,6 +91,7 @@ export async function getState(u: Actor) {
     overheads,
     audits,
     users,
+    templates,
   ] = await Promise.all([
     db.company.findUniqueOrThrow({ where: { id: companyId } }),
     db.job.findMany({
@@ -108,7 +111,7 @@ export async function getState(u: Actor) {
       orderBy: { openedAt: "desc" },
     }),
     db.document.findMany({
-      where: { companyId },
+      where: { companyId, kind: { not: "EXPENSE" } },
       omit: { text: true, suggestion: true },
       include: {
         supplier: { select: { id: true, name: true } },
@@ -143,6 +146,7 @@ export async function getState(u: Actor) {
       },
       orderBy: { name: "asc" },
     }),
+    db.invoiceTemplate.findMany({ where: { companyId }, orderBy: { name: "asc" } }),
   ]);
   const result = jobs.map((j) => {
     const hours = sum(j.hours.map((h) => h.hours.toString())),
@@ -198,9 +202,10 @@ export async function getState(u: Actor) {
     customers,
     suppliers,
     workers,
-    sales: jobs.flatMap((j) => j.sales.map((s) => ({ ...s, jobName: j.name }))),
+    sales: jobs.flatMap((j) => j.sales.map((s) => ({ ...s, jobName: j.name, customerId: j.customer.id, customerName: j.customer.name, customerEmail: j.customer.email }))),
     overheads,
     audits,
+    templates: templates.map((t) => ({ id: t.id, name: t.name, lines: t.lines as TemplateLine[] })),
     users: users.map(({ worker, ...x }) => ({ ...x, workerId: worker?.id })),
   };
 }

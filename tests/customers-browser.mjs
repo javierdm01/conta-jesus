@@ -1,0 +1,67 @@
+﻿import { chromium, expect } from '@playwright/test';
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const f = JSON.parse(await readFile('data/products-fixture.json', 'utf8'));
+const root = path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
+const dirs = (await readdir(root)).filter(d => /^chromium-\d+$/.test(d)).sort();
+const browser = await chromium.launch({headless: true, executablePath: process.env.PLAYWRIGHT_BROWSER_PATH || path.join(root, dirs.at(-1), 'chrome-win64', 'chrome.exe')});
+const context = await browser.newContext({storageState: f.storageState});
+const page = await context.newPage();
+const errors = [];
+page.on('pageerror', e => errors.push(e.message));
+try {
+  await page.setViewportSize({width: 390, height: 844});
+  await page.goto('http://localhost:3000/');
+  await page.getByRole('button', {name: 'Menú', exact: true}).click();
+  await page.getByRole('dialog', {name: 'Menú'}).getByRole('link', {name: 'Clientes'}).click();
+  await page.getByRole('heading', {name: 'Clientes', exact: true}).waitFor();
+  await page.getByRole('button', {name: 'Añadir cliente', exact: true}).first().click();
+  const form = page.getByRole('dialog', {name: 'Añadir cliente'});
+  await form.getByLabel('Nombre del cliente').fill('Ángeles Prueba Cliente');
+  await form.getByLabel('NIF / CIF').fill('12345678Z');
+  await form.getByLabel('Teléfono').fill('600123456');
+  await form.getByLabel('Correo electrónico').fill('cliente@prueba.invalid');
+  await form.getByLabel('Dirección').fill('Calle Prueba 1');
+  const created = page.waitForResponse(r => r.url().endsWith('/api/operations/customer') && r.request().method() === 'POST');
+  await form.getByRole('button', {name: 'Guardar', exact: true}).click();
+  const response = await created; assert.equal(response.status(), 200, await response.text());
+  await form.waitFor({state:'hidden'});
+  await expect(page.getByText('Ángeles Prueba Cliente')).toBeVisible();
+  for (const [width,height] of [[390,844],[768,1024],[1440,1000]]) {
+    await page.setViewportSize({width,height});
+    const search = page.getByLabel('Buscar cliente', {exact:true});
+    await search.fill('prueba ANGELES');
+    await expect(page.getByText('Ángeles Prueba Cliente')).toBeVisible();
+    await search.fill('600123456');
+    await expect(page.getByText('Ángeles Prueba Cliente')).toBeVisible();
+    await search.fill('nadie-no-existe');
+    await expect(page.getByRole('status').filter({hasText:'No hay clientes'})).toBeVisible();
+    await search.fill('angeles');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `clientes ${width}`);
+  }
+  await page.getByRole('button', {name:'Editar Ángeles Prueba Cliente'}).click();
+  const edit = page.getByRole('dialog', {name:'Editar cliente'});
+  await edit.getByLabel('Teléfono').fill('600123999');
+  await edit.getByRole('button', {name:'Guardar', exact:true}).click();
+  await edit.waitFor({state:'hidden'});
+  await expect(page.getByText('600123999', {exact:false})).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Ángeles Prueba Cliente')).toBeVisible();
+  await page.goto('http://localhost:3000/trabajos');
+  await page.getByRole('button', {name:'Crear trabajo', exact:true}).first().click();
+  const job = page.getByRole('dialog', {name:'Crear trabajo'});
+  await job.getByLabel('Nombre del trabajo').fill('Trabajo de prueba cliente');
+  const select = job.locator('select[name=customerId]');
+  await expect(select.locator('option').filter({hasText:'Ángeles Prueba Cliente'})).toHaveCount(1);
+  await select.selectOption({label:'Ángeles Prueba Cliente'});
+  const jobResponse = page.waitForResponse(r=>r.url().endsWith('/api/operations/job') && r.request().method()==='POST');
+  await job.getByRole('button', {name:'Guardar',exact:true}).click();
+  const saved=await jobResponse; assert.equal(saved.status(),200,await saved.text());
+  await job.waitFor({state:'hidden'});
+  const state=await (await context.request.get('http://localhost:3000/api/state')).json();
+  assert.equal(state.jobs.find(j=>j.name==='Trabajo de prueba cliente')?.customer.name, 'Ángeles Prueba Cliente');
+  assert.deepEqual(errors, []);
+  console.log('OK clientes: crear, buscar, editar y asociar a trabajo; móvil, tablet y PC.');
+} finally { await browser.close(); }
+

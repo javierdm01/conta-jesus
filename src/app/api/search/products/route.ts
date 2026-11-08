@@ -8,7 +8,7 @@ export async function GET(req: Request) {
       q = new URL(req.url).searchParams.get("q")?.trim().slice(0, 100) ?? "";
     const admin = u.role === "ADMIN";
     const lots = await db.stockLot.findMany({
-      where: { companyId: u.companyId },
+      where: { companyId: u.companyId, archivedAt: null },
       select: {
         id: true,
         code: true,

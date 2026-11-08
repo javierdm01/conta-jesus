@@ -13,3 +13,12 @@ export async function scanPage(input: string, output: string, run: Run): Promise
   if (!r.width || !r.height) throw new Error("La imagen escaneada no es válida");
   return { width: r.width, height: r.height, quality: r.quality === "ok" ? "ok" : "fallback" };
 }
+
+// Gira fotos hechas de lado o del revés; devuelve el archivo a leer (el original queda intacto).
+export async function uprightPage(input: string, output: string, run: Run): Promise<string> {
+  const r = JSON.parse(await run(
+    process.env.PYTHON_PATH ?? (process.platform === "win32" ? "python" : "python3"),
+    [path.resolve("scripts/prepare-ocr.py"), "--upright", input, output],
+  )) as { rotated: number };
+  return r.rotated ? output : input;
+}

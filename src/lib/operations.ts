@@ -1,3 +1,6 @@
+import { unlink } from "node:fs/promises";
+import path from "node:path";
+import { documentDir } from "./document-access";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { db } from "./db";
@@ -8,6 +11,7 @@ import { quantityForUnit } from "./inventory-math";
 import { inventoryOperation } from "./inventory";
 import { purchaseOrderOperation } from "./purchase-orders";
 import { userOperation } from "./users";
+import { catalogOperation } from "./catalog";
 import { deleteDocuments } from "./document-delete";
 
 type Tx = Prisma.TransactionClient;
@@ -39,6 +43,8 @@ export async function operate(u: Actor, action: string, input: unknown) {
   if (action.startsWith("order-"))
     return purchaseOrderOperation(u, action, input);
   if (action.startsWith("user-")) return userOperation(u, action, input);
+  if (action.startsWith("catalog-") || action.startsWith("template-"))
+    return catalogOperation(u, action, input);
   // Técnicos y responsable; las reglas de propiedad se comprueban dentro.
   if (action === "document-delete") return deleteDocuments(u, input);
   if (
@@ -199,7 +205,8 @@ export async function operate(u: Actor, action: string, input: unknown) {
         jobId: v.id,
         workerId: v.id,
         date: v.date,
-        hours: v.hours,
+        startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Indica la hora de inicio."),
+        endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Indica la hora de fin."),
         activity: z.enum([
           "Instalación",
           "Reparación",
@@ -214,8 +221,10 @@ export async function operate(u: Actor, action: string, input: unknown) {
         requestKey: v.requestKey,
       })
       .parse(input);
-    if (dec(d.hours).gt(24))
-      throw new AppError("Un parte no puede superar 24 horas.");
+    const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+    if (minutes(d.endTime) <= minutes(d.startTime))
+      throw new AppError("La hora de fin debe ser posterior a la de inicio.");
+    const hours = ((minutes(d.endTime) - minutes(d.startTime)) / 60).toFixed(2);
     await accessibleJob(u, d.jobId);
     await belongs("worker", d.workerId, companyId);
     if (u.role !== "ADMIN" && u.worker?.id !== d.workerId)
@@ -229,13 +238,14 @@ export async function operate(u: Actor, action: string, input: unknown) {
       });
       if (
         sum(previous.map((x) => x.hours.toString()))
-          .plus(d.hours)
+          .plus(hours)
           .gt(24)
       )
         throw new AppError("El total diario del técnico supera 24 horas.");
       const row = await tx.timeEntry.create({
         data: {
           ...d,
+          hours,
           companyId,
           date: new Date(d.date),
           hourlyCost: worker.hourlyCost,
@@ -283,15 +293,18 @@ export async function operate(u: Actor, action: string, input: unknown) {
         tax: v.money,
         withholding: v.money,
         collected: v.money,
+        notes: v.text,
         requestKey: v.requestKey,
         documentId: v.id.optional(),
         lines: z
           .array(
             z.object({
-              lotId: v.id,
+              lotId: v.id.optional(),
               description: v.name,
+              unit: z.string().trim().min(1).max(12).default("ud"),
               quantity: v.quantity,
               price: v.price,
+              discount: v.percent.default("0"),
             }),
           )
           .min(1)
@@ -310,8 +323,13 @@ export async function operate(u: Actor, action: string, input: unknown) {
     return serial(async (tx) => {
       const saleLines = [];
       for (const l of d.lines ?? []) {
+        // Línea manual (mano de obra, desplazamiento…): no toca el almacén.
+        if (!l.lotId) {
+          saleLines.push({ ...l, net: lineNet(l.quantity, l.price, l.discount) });
+          continue;
+        }
         const lot = await tx.stockLot.findFirst({
-          where: { id: l.lotId, companyId },
+          where: { id: l.lotId, companyId, archivedAt: null },
           select: { unit: true },
         });
         if (!lot)
@@ -324,7 +342,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
         saleLines.push({
           ...l,
           unit: lot.unit,
-          net: lineNet(l.quantity, l.price),
+          net: lineNet(l.quantity, l.price, l.discount),
         });
       }
       if (saleLines.length && !sum(saleLines.map((l) => l.net)).eq(d.net))
@@ -397,7 +415,19 @@ export async function operate(u: Actor, action: string, input: unknown) {
       .object({
         jobId: v.id,
         name: v.name,
-        materials: v.money,
+        materials: v.money.optional(),
+        lines: z
+          .array(
+            z.object({
+              description: v.name,
+              unit: z.string().trim().min(1).max(12).default("ud"),
+              quantity: v.quantity,
+              price: v.price,
+              catalogId: v.id.optional(),
+            }),
+          )
+          .max(200)
+          .optional(),
         hours: v.plannedHours,
         hourlyCost: v.price,
         travel: v.money,
@@ -408,8 +438,12 @@ export async function operate(u: Actor, action: string, input: unknown) {
       })
       .parse(input);
     await accessibleJob(u, d.jobId);
+    // Con artículos, el coste de materiales sale de ellos; sin artículos vale el importe escrito a mano.
+    const materials = d.lines?.length
+      ? cents(sum(d.lines.map((l) => lineNet(l.quantity, l.price))))
+      : (d.materials ?? "0");
     const cost = sum([
-      d.materials,
+      materials,
       dec(d.hours).mul(d.hourlyCost),
       d.travel,
       d.subcontract,
@@ -425,7 +459,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
           companyId,
           jobId: d.jobId,
           name: d.name,
-          inputs: d,
+          inputs: { ...d, materials },
           cost: cents(cost),
           net,
           plannedHours: d.hours,
@@ -598,8 +632,17 @@ export async function operate(u: Actor, action: string, input: unknown) {
         amount: v.money,
         tax: v.money.default("0"),
         date: v.date,
+        category: z.enum(v.expenseCategories).default("OTHER"),
+        documentId: v.id.optional(),
       })
       .parse(input);
+    if (d.documentId) {
+      const file = await db.document.findFirst({
+        where: { id: d.documentId, companyId, kind: "EXPENSE" },
+        select: { id: true },
+      });
+      if (!file) throw new AppError("El justificante no está disponible.", 404);
+    }
     return serial(async (tx) => {
       const row = await tx.overhead.create({
         data: { ...d, companyId, date: new Date(d.date) },
@@ -607,6 +650,26 @@ export async function operate(u: Actor, action: string, input: unknown) {
       await audit(tx, u, "Registrar gasto general", row.id);
       return row;
     });
+  }
+  if (action === "overheadDelete") {
+    admin(u);
+    const { id } = z.object({ id: v.id }).parse(input);
+    const removed = await serial(async (tx) => {
+      const row = await tx.overhead.findFirst({ where: { id, companyId } });
+      if (!row) throw new AppError("Gasto no disponible.", 404);
+      await tx.overhead.delete({ where: { id } });
+      await audit(tx, u, "Eliminar gasto general", id);
+      // Su justificante solo existe para este gasto: se borra con él.
+      const file = row.documentId
+        ? await tx.document.findFirst({
+            where: { id: row.documentId, companyId, kind: "EXPENSE", overheads: { none: {} } },
+          })
+        : null;
+      if (file) await tx.document.delete({ where: { id: file.id } });
+      return file?.filename;
+    });
+    if (removed) await unlink(path.join(documentDir(), path.basename(removed))).catch(() => {});
+    return { id };
   }
   throw new AppError("Acción desconocida.", 404);
 }

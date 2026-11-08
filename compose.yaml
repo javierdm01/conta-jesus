@@ -16,6 +16,16 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    volumes: ["redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
   migrate:
     <<: *application
     command: ["npm", "run", "db:migrate"]
@@ -32,9 +42,12 @@ services:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       APP_TRUSTED_ORIGINS: ${APP_TRUSTED_ORIGINS:-}
       DOCUMENT_DIR: /app/data/documents
+      REDIS_URL: redis://redis:6379
+      OCR_CONCURRENCY: ${OCR_CONCURRENCY:-2}
     volumes: ["documents:/app/data/documents", "./backups:/app/backups:ro"]
     depends_on:
       migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
     restart: unless-stopped
   worker:
     <<: *application
@@ -44,8 +57,8 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
     restart: unless-stopped
-    mem_limit: 1500m
-    cpus: 1.0
+    mem_limit: 3000m
+    cpus: 2.0
   backup:
     image: postgres:16-bookworm
     environment:
@@ -62,3 +75,4 @@ services:
 volumes:
   postgres:
   documents:
+  redis:

@@ -1,10 +1,52 @@
 """Variantes OCR locales: foto, trama de pantalla y blanco/negro. Original inmutable."""
 import sys
 import json
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 import cv2
 import numpy as np
 cv2.setNumThreads(1)
+
+
+ROTATIONS = {0: None, 90: cv2.ROTATE_90_CLOCKWISE, 180: cv2.ROTATE_180, 270: cv2.ROTATE_90_COUNTERCLOCKWISE}
+
+
+def text_score(gray):
+    """Texto legible (suma de confianzas de palabras de 3+ letras) en una versión reducida."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'r.png')
+        cv2.imwrite(path, gray)
+        out = subprocess.run([os.environ.get('TESSERACT_PATH', 'tesseract'), path, 'stdout', '-l', 'eng', '--psm', '11', 'tsv'],
+                             capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout or ''
+    score = 0.0
+    for line in out.splitlines()[1:]:
+        c = line.split('	')
+        if len(c) >= 12 and c[0] == '5' and float(c[10]) >= 60 and sum(ch.isalpha() for ch in c[11]) >= 3:
+            score += float(c[10])
+    return score
+
+
+def upright_angle(image):
+    """Grados en sentido horario que dejan el texto derecho (fotos de lado o del revés)."""
+    height, width = image.shape[:2]
+    factor = 1400 / max(height, width)
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    small = cv2.resize(gray, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
+    scores = {0: text_score(small)}
+    # Una página derecha ya lee mucho texto: no hace falta probar el resto.
+    if scores[0] >= 3000:
+        return 0
+    for angle in (90, 270, 180):
+        scores[angle] = text_score(cv2.rotate(small, ROTATIONS[angle]))
+    best = max(scores, key=scores.get)
+    # shortcut: sin texto legible en ninguna orientación se deja como está; subir el umbral si hay falsos giros.
+    return best if scores[best] > scores[0] * 1.5 and scores[best] >= 500 else 0
+
+
+def rotate(image, angle):
+    return image if not angle else cv2.rotate(image, ROTATIONS[angle])
 
 
 def screen_score(image):
@@ -89,6 +131,7 @@ def scan_page(source, destination):
     image = cv2.imread(source, cv2.IMREAD_GRAYSCALE)
     if image is None or image.size > 40_000_000:
         raise ValueError("Imagen no válida o demasiado grande")
+    image = rotate(image, upright_angle(image))
     rectified = page_on_dark_background(image)
     quality = 'ok' if rectified.shape != image.shape else 'fallback'
     temporary = str(Path(destination).with_suffix('.tmp.png'))
@@ -109,6 +152,16 @@ def scan_page(source, destination):
 
 
 def main():
+    if sys.argv[1] == '--upright':
+        image = cv2.imread(sys.argv[2], cv2.IMREAD_GRAYSCALE)
+        if image is None or image.size > 120_000_000:
+            raise ValueError('Imagen no válida o demasiado grande')
+        angle = upright_angle(image)
+        # Una página ya derecha no se reescribe: otro códec cambia píxeles y desestabiliza la lectura.
+        if angle and not cv2.imwrite(sys.argv[3], rotate(image, angle)):
+            raise ValueError('No se pudo guardar la imagen enderezada')
+        print(json.dumps({'rotated': angle}))
+        return
     if sys.argv[1] == '--scan':
         scan_page(*sys.argv[2:4])
         return

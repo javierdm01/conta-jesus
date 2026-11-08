@@ -31,10 +31,10 @@ export function tabularText(tsv: string) {
     if(auxiliary>=0) { lines[i]=words.slice(auxiliary).map(w=>w.text).join(" ").replace(/\s*:\s*$/," ").trim(); continue; }
     const reference = words.filter(w=>w.left<description.left-10 && /^[A-Z0-9][A-Z0-9._/-]{3,24}$/.test(w.text) && /\d/.test(w.text)).sort((a,b)=>Math.abs(a.left-(codeHeader?.left??description.left-50))-Math.abs(b.left-(codeHeader?.left??description.left-50)))[0];
     if(!reference) continue;
-    const values = starts.map((left,j)=>words.filter(w=>w.left+w.width/2>=left && (j===starts.length-1 || w.left+w.width/2<starts[j+1])).map(w=>w.text).join("").replace(/[€|{}():'’]/g,""));
+    const values = starts.map((left,j)=>words.filter(w=>w.left+w.width/2>=left && (j===starts.length-1 || w.left+w.width/2<starts[j+1])).map(w=>w.text).join("").replace(/[^\d.,-]/g,"").replace(/[.,]+$/,""));
     if(values.some(v=>!/^-?\d+(?:[.,]\d+)?$/.test(v))) continue;
     const end = header.find(w=>/^T?RAEE/.test(norm(w.text)))?.left ?? starts[0];
-    const desc=words.filter(w=>w!==reference && w.left>reference.left+reference.width-3 && (!brand || w.left>=description.left-10) && w.left+w.width/2<end).map(w=>w.text).join(" ").replace(/^[|]+/,"").trim();
+    const desc=words.filter(w=>w!==reference && w.left>reference.left+reference.width-3 && (!brand || w.left>=description.left-10) && w.left+w.width/2<end).map(w=>w.text).join(" ").replace(/^[|=~_:;.,\s-]+/,"").trim();
     if(desc.length<3) continue;
     const b = brand ? words.filter(w=>w.left>=brand.left-10 && w.left<description.left-10).map(w=>w.text).join(" ") : "";
     lines[i]=`${reference.text}  ${desc}  ${values.join("  ")}${b?`\nRef.Prov: ${reference.text} Marca: ${b}`:""}`;

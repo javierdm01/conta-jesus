@@ -192,3 +192,7 @@ Resultados ejecutados (Docker, PostgreSQL y OCR reales; datos de prueba retirado
 - OCR, imagen escaneada frente a original sobre cuatro muestras (tres con lectura humana de referencia): sin mejora en las ya limpias y un dato peor (fecha de la oferta 9466) cuando no se detecta papel. Por eso el worker lee la imagen original cuando la escaneada es `fallback`; la escaneada solo se muestra. **No medido todavía con fotos torcidas o con sombras.**
 - Correcciones halladas al probar: `crypto.randomUUID` no existe con `http://IP` (ahora `src/lib/uuid.ts`, con prueba) y el diseño de tablet no cubría 1280×800 (límite de altura 820 px).
 - Pendiente: medir el OCR con fotos reales difíciles y valores de referencia.
+# Clientes · 07/11/2026
+
+En una empresa de prueba aislada se comprobó desde navegador la creación y edición de cliente, la búsqueda por nombre sin tildes y teléfono, la persistencia tras recargar y su selección y asociación al crear un trabajo. Se verificaron anchos de 390, 768 y 1440 px sin desbordamiento horizontal. Los datos de prueba se eliminaron. TypeScript y 85 pruebas automáticas completaron correctamente. No se ha probado en dispositivos físicos. El nuevo flujo de facturación y presupuestos con cliente directo sigue pendiente.
+

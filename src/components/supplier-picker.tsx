@@ -133,7 +133,8 @@ export function SupplierPicker({
           )}
           <Button
             type="button"
-            disabled={busy || !draft.name.trim()}
+            loading={busy}
+            disabled={!draft.name.trim()}
             onClick={() => void save()}
           >
             {busy ? "Creando…" : "Guardar y seleccionar proveedor"}

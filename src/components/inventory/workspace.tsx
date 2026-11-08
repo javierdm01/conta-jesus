@@ -26,6 +26,9 @@ import {
   ClipboardCheck,
   Download,
   RefreshCw,
+  Pencil,
+  PackageMinus,
+  ArchiveRestore,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
@@ -130,6 +133,22 @@ export default function InventoryWorkspace({
       order,
     });
   }, [data, search, filter, receiptId, location, supplier, order]);
+  // Misma referencia + proveedor + unidad = un solo artículo: manda el lote más reciente (último precio)
+  // y los anteriores quedan debajo como trazabilidad. Solo el administrador ve el proveedor.
+  const groups = useMemo(() => {
+    const map = new Map<string, InventoryLot[]>();
+    for (const l of filtered) {
+      const supplier = l.document?.supplier?.name;
+      const key = l.reference && supplier && !l.archivedAt ? [l.reference.toLowerCase(), l.unit, supplier].join("|") : l.id;
+      map.set(key, [...(map.get(key) ?? []), l]);
+    }
+    return [...map.values()].map((g) => {
+      const sorted = [...g].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+      const t = (f: "onHand" | "received" | "reserved" | "available") => sorted.reduce((a, l) => a.plus(l[f]), dec(0)).toString();
+      // Conteo y edición actúan sobre el lote real; los totales solo sirven para mostrar y para registrar usos (el servidor reparte por antigüedad).
+      return { head: sorted[0], rest: sorted.slice(1), all: { ...sorted[0], onHand: t("onHand"), received: t("received"), reserved: t("reserved"), available: t("available") } };
+    });
+  }, [filtered]);
   const lotHref = (code?: string) =>
     `/inventario${code ? `/${code}` : ""}${defaultJob ? `?trabajo=${encodeURIComponent(defaultJob)}` : ""}`;
   const after = async () => {
@@ -173,6 +192,16 @@ export default function InventoryWorkspace({
     ? data.lots.find((l) => l.code === selectedCode.toUpperCase())
     : undefined;
   const choose = (l: InventoryLot, kind: string) => setMove({ lot: l, kind });
+  const setArchived = async (l: InventoryLot, archived: boolean) => {
+    if (archived && !window.confirm("¿Retirar este artículo de la lista? Se conservan sus existencias, documentos e historial. Puedes recuperarlo desde Archivados.")) return;
+    try {
+      await save(archived ? "stock-archive" : "stock-restore", { lotId: l.id });
+      setSelected((current) => ({ ...current, [l.code]: false }));
+      await after();
+      if (selectedCode) router.push(lotHref());
+      setNotice(archived ? "Artículo retirado de la lista. Puedes recuperarlo en Archivados." : "Artículo recuperado.");
+    } catch (e) { setNotice((e as Error).message); }
+  };
   const actions = (l: InventoryLot) => (
     <div className="actions">
       <Button onClick={() => choose(l, "USE")} disabled={!dec(l.onHand).gt(0)}>
@@ -307,6 +336,7 @@ export default function InventoryWorkspace({
                 <span>{lot.unit} en almacén</span>
               </div>
             </section>
+            {lot.archivedAt && <div className="info-banner mt-5">Este artículo está archivado. Sus existencias e historial se conservan.</div>}
             <div className="stats">
               <StockStat
                 icon={Boxes}
@@ -341,7 +371,7 @@ export default function InventoryWorkspace({
                 }
               />
             </div>
-            {actions(lot)}
+            {!lot.archivedAt && actions(lot)}
             {data.isAdmin && (
               <div className="product-pricing">
                 <div>
@@ -356,7 +386,7 @@ export default function InventoryWorkspace({
                       : "Puedes ajustar el precio al facturar."}
                   </p>
                 </div>
-                {onInvoiceProduct && (
+                {onInvoiceProduct && !lot.archivedAt && (
                   <Button onClick={() => onInvoiceProduct(lot)}>
                     Añadir a factura
                   </Button>
@@ -460,12 +490,14 @@ export default function InventoryWorkspace({
                   <div className="panel-head">
                     <h2>Ficha del material</h2>
                     {data.isAdmin && (
-                      <button
-                        className="text-button"
-                        onClick={() => setEdit(lot)}
-                      >
-                        Editar
-                      </button>
+                      <div className="flex gap-4">
+                        <button className="text-button" onClick={() => setEdit(lot)}>
+                          Editar
+                        </button>
+                        <button className="text-button text-red-700" onClick={() => setArchived(lot, !lot.archivedAt)}>
+                          {lot.archivedAt ? "Recuperar" : "Retirar"}
+                        </button>
+                      </div>
                     )}
                   </div>
                   <dl className="lot-facts">
@@ -679,6 +711,7 @@ export default function InventoryWorkspace({
               <option value="empty">Agotados</option>
               <option value="unpriced">Pendientes de precio</option>
               <option value="low">En mínimo de material libre</option>
+              {data.isAdmin && <option value="archived">Archivados</option>}
             </select>
             <details className="inventory-more-filters">
               <summary>Más filtros</summary>
@@ -813,93 +846,69 @@ export default function InventoryWorkspace({
           </div>
           {filtered.length ? (
             <div className="stock-card-grid">
-              {filtered.map((l) => (
-                <article className="stock-card" key={l.id}>
-                  <div className="stock-card-top">
-                    <label>
-                      <input
-                        type="checkbox"
-                        aria-label={`Seleccionar ${l.description}`}
-                        checked={!!selected[l.code]}
-                        onChange={(e) =>
-                          setSelected({
-                            ...selected,
-                            [l.code]: e.target.checked,
-                          })
-                        }
-                      />
-                      <span className="stock-item-icon">
-                        <Package size={22} />
-                      </span>
-                    </label>
+              {groups.map(({ head: l, rest, all }) => (
+                <article className={`stock-card${l.archivedAt ? " archived" : ""}`} key={l.id}>
+                  <div className="sc-head">
+                    <input
+                      type="checkbox"
+                      aria-label={`Seleccionar ${l.alias || l.description}`}
+                      checked={!!selected[l.code]}
+                      onChange={(e) => setSelected({ ...selected, [l.code]: e.target.checked })}
+                    />
+                    <Link prefetch href={lotHref(l.code)} className="sc-title" title={l.alias ? `${l.alias} · ${l.description}` : l.description}>
+                      {l.alias || l.description}
+                    </Link>
                     <StockBadge lot={l} />
                   </div>
-                  <Link
-                    prefetch
-                    href={lotHref(l.code)}
-                    className="stock-card-title"
-                  >
-                    {l.alias || l.description}
-                    <ArrowUpRight size={15} />
-                  </Link>
-                  <p className="stock-card-ref">
-                    {l.alias && (
-                      <span className="product-original-name">
-                        {l.description}
-                      </span>
-                    )}
-                    {l.reference ? `Ref. ${l.reference}` : "Sin referencia"}
-                    {l.brand && ` · ${l.brand}`}
+                  <p className="sc-meta">
+                    <span>{l.reference ? `Ref. ${l.reference}` : "Sin referencia"}{l.brand && ` · ${l.brand}`}</span>
+                    <span className="sc-loc"><MapPin size={12} />{l.location || "Sin ubicación"}</span>
                   </p>
-                  <div className="stock-card-number">
-                    <strong>
-                      {n(l.onHand)}
-                      <span>{l.unit}</span>
-                    </strong>
-                    <small>de {n(l.received)} recibidos</small>
-                  </div>
-                  <div className="stock-card-split">
-                    <span>
-                      <i className="stock-dot" />
-                      {n(l.available)} libres
-                    </span>
-                    <span>{n(l.reserved)} reservados</span>
-                  </div>
-                  <div className="stock-card-location">
-                    <MapPin size={14} />
-                    {l.location || "Sin ubicación asignada"}
-                  </div>
-                  {data.isAdmin && (
-                    <div className="stock-recommendation">
-                      Venta recomendada{" "}
-                      <strong>
-                        {euro(l.recommendedPrice)}
-                        {l.recommendedPrice != null ? ` / ${l.unit}` : ""}
-                      </strong>
-                      <small>Coste + 30 % · sin IVA</small>
+                  <div className="sc-foot">
+                    <div className="sc-qty">
+                      <strong>{n(all.onHand)}<span>{l.unit}</span></strong>
+                      <small>de {n(all.received)} · {n(all.reserved)} reserv.</small>
                     </div>
-                  )}
-                  {lowStock(l) && (
-                    <div className="stock-low">
-                      Material libre en el mínimo configurado
+                    {data.isAdmin && l.recommendedPrice != null && (
+                      <div className="sc-price" title="Coste + 30 % · sin IVA">
+                        <strong>{euro(l.recommendedPrice)}</strong>
+                        <small>venta / {l.unit}</small>
+                      </div>
+                    )}
+                    <div className="sc-actions">
+                      {data.isAdmin && (
+                        <button type="button" title="Editar artículo" aria-label={`Editar ${l.alias || l.description}`} onClick={() => setEdit(l)}>
+                          <Pencil size={16} />
+                        </button>
+                      )}
+                      {l.archivedAt ? (
+                        <button type="button" title="Recuperar artículo" aria-label={`Recuperar ${l.alias || l.description}`} onClick={() => setArchived(l, false)}>
+                          <ArchiveRestore size={16} />
+                        </button>
+                      ) : (
+                        <>
+                          <button type="button" title="Preparar etiquetas de este lote" aria-label={`Etiquetas de ${l.alias || l.description}`} onClick={() => setPrintLots([l])}>
+                            <Printer size={16} />
+                          </button>
+                          <button type="button" title="Registrar uso" aria-label={`Registrar uso de ${l.alias || l.description}`} disabled={!dec(all.onHand).gt(0)} onClick={() => choose(all, "USE")}>
+                            <PackageMinus size={16} />
+                          </button>
+                        </>
+                      )}
                     </div>
-                  )}
-                  <div className="stock-card-bottom">
-                    <span className="lot-code">{l.code}</span>
-                    <button
-                      title="Preparar etiquetas de este lote"
-                      onClick={() => setPrintLots([l])}
-                    >
-                      <Printer size={17} />
-                    </button>
-                    <button
-                      className="text-button"
-                      disabled={!dec(l.onHand).gt(0)}
-                      onClick={() => choose(l, "USE")}
-                    >
-                      Registrar uso
-                    </button>
                   </div>
+                  {rest.length > 0 && (
+                    <details className="sc-lots">
+                      <summary>{rest.length + 1} entradas · precio de la última</summary>
+                      {[l, ...rest].map((o) => (
+                        <Link prefetch key={o.id} href={lotHref(o.code)}>
+                          {o.document?.number ?? o.code} · {new Date(o.createdAt).toLocaleDateString("es-ES")} · {n(o.onHand)}/{n(o.received)} {o.unit}
+                          {o.recommendedPrice != null && ` · venta ${euro(o.recommendedPrice)}`}
+                        </Link>
+                      ))}
+                    </details>
+                  )}
+                  {lowStock(l) && <div className="stock-low">Material libre en el mínimo</div>}
                 </article>
               ))}
             </div>
@@ -977,7 +986,7 @@ export default function InventoryWorkspace({
           saved={after}
         />
       )}
-      {edit && <EditLot lot={edit} close={() => setEdit(null)} saved={after} />}
+      {edit && <EditLot lot={edit} close={() => setEdit(null)} saved={after} onArchive={data.isAdmin ? () => setArchived(edit, !edit.archivedAt) : undefined} />}
       {count && (
         <CountForm lot={count} close={() => setCount(null)} saved={after} />
       )}
@@ -1189,8 +1198,8 @@ function MovementForm({
             Cancelar
           </Button>
           <Button
+            loading={busy}
             disabled={
-              busy ||
               (!jobs.length && kind !== "SUPPLIER_RETURN") ||
               (kind === "SUPPLIER_RETURN" && !isAdmin)
             }
@@ -1207,10 +1216,12 @@ function EditLot({
   lot,
   close,
   saved,
+  onArchive,
 }: {
   lot: InventoryLot;
   close: () => void;
   saved: () => Promise<void>;
+  onArchive?: () => void;
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -1231,6 +1242,7 @@ function EditLot({
             const f = new FormData(e.currentTarget);
             await save("stock-edit", {
               lotId: lot.id,
+              description: f.get("description"),
               alias: f.get("alias"),
               location: f.get("location"),
               brand: f.get("brand"),
@@ -1248,17 +1260,19 @@ function EditLot({
       >
         <div className="form-grid">
           {[
+            { name: "description", label: "Nombre del artículo", value: lot.description },
             { name: "alias", label: "Alias del producto", value: lot.alias },
             { name: "location", label: "Ubicación", value: lot.location },
             { name: "brand", label: "Marca", value: lot.brand },
             { name: "model", label: "Modelo", value: lot.model },
           ].map((f) => (
-            <label key={f.name}>
+            <label key={f.name} className={f.name === "description" ? "full" : undefined}>
               {f.label}
               <input
                 name={f.name}
                 defaultValue={f.value}
-                maxLength={f.name === "alias" ? 200 : undefined}
+                required={f.name === "description"}
+                maxLength={f.name === "alias" || f.name === "description" ? 200 : undefined}
               />
             </label>
           ))}
@@ -1279,8 +1293,8 @@ function EditLot({
           </label>
         </div>
         <p className="small-note">
-          El alias se utiliza al buscar y facturar, conservando el nombre del
-          proveedor. Se comparte entre lotes del mismo proveedor, referencia y
+          El alias se utiliza al buscar y facturar. El documento original se conserva.
+          Se comparte entre lotes del mismo proveedor, referencia y
           unidad. El mínimo 0 desactiva el aviso. Las cantidades se corrigen
           mediante movimientos para conservar el historial.
         </p>
@@ -1290,6 +1304,11 @@ function EditLot({
           </p>
         )}
         <div className="form-footer">
+          {onArchive && (
+            <Button type="button" variant="outline" className="mr-auto" onClick={onArchive} disabled={busy}>
+              {lot.archivedAt ? "Recuperar artículo" : "Retirar artículo"}
+            </Button>
+          )}
           <Button type="button" variant="outline" onClick={close}>
             Cancelar
           </Button>

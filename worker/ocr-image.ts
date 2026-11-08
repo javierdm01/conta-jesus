@@ -5,6 +5,7 @@ import { readTableCells } from "./ocr-cells";
 import { tabularText } from "./ocr-tabular";
 import { fillEmptyCells } from "./ocr-gaps";
 import { readFiscalBox } from "./ocr-footer";
+import { uprightPage } from "./scan-page";
 import { parseOcr } from "../src/lib/ocr";
 import { cents, documentLineNet, sum } from "../src/lib/money";
 
@@ -15,6 +16,7 @@ export async function ocrImage(
   run: Run,
   workingDirectory = path.dirname(img),
 ) {
+  img = await uprightPage(img, path.join(workingDirectory, `upright-${path.parse(img).name}.png`), run);
   const read = async (file: string, psm: string, cells = false, language="spa+eng") => {
     const tsv = await run(process.env.TESSERACT_PATH ?? "tesseract", [
       file,

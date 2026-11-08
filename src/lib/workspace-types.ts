@@ -40,6 +40,7 @@ export type Hours = {
 };
 export type Quote = {
   id: string;
+  inputs?: { margin?: string; lines?: { description: string; unit: string; quantity: string; price: string }[] };
   name: string;
   cost: string;
   net: string;
@@ -58,7 +59,11 @@ export type Sale = {
   collected: string;
   dueAt?: string;
   jobName?: string;
-  lines?: {id:string;description:string;unit:string;quantity:string;price:string;net:string}[];
+  notes?: string;
+  customerId?: string;
+  customerName?: string;
+  customerEmail?: string;
+  lines?: {id:string;description:string;unit:string;quantity:string;price:string;discount?:string;net:string}[];
 };
 export type Metrics = {
   net: string;
@@ -118,7 +123,9 @@ export type Doc = {
   tax?: string;
   replacedBy?: { id: string };
 };
+export type TemplateLine = { description: string; unit: string; quantity: string; price: string };
 export type State = {
+  templates: { id: string; name: string; lines: TemplateLine[] }[];
   user: { id: string; name: string; role: string; workerId?: string };
   company: { name: string; taxId?: string };
   jobs: Job[];
@@ -131,7 +138,10 @@ export type State = {
     id: string;
     description: string;
     amount: string;
+    tax: string;
     date: string;
+    category: string;
+    documentId: string | null;
   }[];
   audits: { id: string; action: string; createdAt: string }[];
   users?: {
