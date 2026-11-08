@@ -71,6 +71,7 @@ const CreditReview = dynamic(() => import("./inventory/credit-review"), { loadin
 const SupplierAccounts = dynamic(() => import("./supplier-accounts"), { loading: () => <PageSkeleton /> });
 const InvoicePage = dynamic(() => import("./invoice-page"), { loading: () => <PageSkeleton /> });
 const HomeWidgets = dynamic(() => import("./home-widgets"), { ssr: false, loading: () => <PageSkeleton /> });
+const ContactsHub = dynamic(() => import("./contacts-hub"), { loading: () => <PageSkeleton /> });
 const SalesHub = dynamic(() => import("./sales-hub"), { loading: () => <PageSkeleton /> });
 const InvoiceList = dynamic(() => import("./invoice-list"), { loading: () => <PageSkeleton /> });
 const InvoiceDetail = dynamic(() => import("./invoice-detail"), { loading: () => <PageSkeleton /> });
@@ -111,6 +112,8 @@ type Field = {
   hint?: string;
   more?: boolean;
   locked?: boolean;
+  /** Primera opción del selector (sin seleccionarla): abre el alta del elemento. */
+  addNew?: { label: string; open: () => void };
   picker?: "customer" | "worker";
 };
 type Modal = {
@@ -142,11 +145,9 @@ const nav = [
   { href: "/", label: "Inicio", icon: LayoutDashboard },
   { href: "/trabajos", label: "Trabajos", icon: BriefcaseBusiness },
   { href: "/ventas", label: "Ventas", icon: Receipt },
+  { href: "/contactos", label: "Clientes y proveedores", icon: Users },
   { href: "/facturas", label: "Documentos", icon: Files },
   { href: "/inventario", label: "Almacén", icon: Package },
-  { href: "/clientes", label: "Clientes", icon: Users },
-  { href: "/proveedores", label: "Proveedores", icon: Truck },
-  { href: "/cuentas", label: "Cuentas de proveedores", icon: Calculator },
   { href: "/beneficios", label: "Beneficios", icon: ChartNoAxesCombined },
   { href: "/horas", label: "Horas", icon: Clock },
   { href: "/gastos", label: "Gastos", icon: Wallet },
@@ -156,7 +157,7 @@ const nav = [
   { href: "/configuracion", label: "Configuración", icon: Settings },
 ];
 // Cuatro destinos principales; lo demás va en el menú del perfil (2 clics).
-const primaryHrefs = ["/", "/trabajos", "/ventas", "/inventario", "/facturas"];
+const primaryHrefs = ["/", "/trabajos", "/ventas", "/contactos", "/inventario", "/facturas"];
 const kindLabel: Record<string, string> = {
   AUTO: "Documento (detectando tipo)",
   PURCHASE: "Factura de compra",
@@ -434,6 +435,7 @@ export function Dashboard({
   // Ventas agrupa sus pantallas (facturas, presupuestos, cobros, catálogo…); el resto, por su primer segmento.
   const navGroups: Record<string, string[]> = {
     ventas: ["ventas", "facturas-venta", "nueva-factura", "cobros", "presupuestos", "catalogo"],
+    contactos: ["contactos", "clientes", "proveedores", "cuentas", "pedidos"],
   };
   const navActive = (href: string) =>
     href === "/" ? pathname === "/" : (navGroups[href.slice(1)] ?? [href.slice(1)]).includes(pathname.split("/")[1]);
@@ -718,7 +720,7 @@ export function Dashboard({
       action: "hours",
       photos: true,
       fields: [
-        { ...jobField(), locked: !!selected?.id },
+        { ...jobField(), locked: !!selected?.id, addNew: { label: "+ Agregar nuevo trabajo", open: createJob } },
         { ...select("workerId", "Técnico", options(s.workers), s.user.workerId ?? undefined), picker: "worker" as const },
         select(
           "activity",
@@ -794,10 +796,9 @@ export function Dashboard({
       customer: () => createContact("customer"),
       cost: () => setMaterial(true),
       hours: createHours,
-      quote: createQuote,
-      invoice: () => openInvoice(),
+      quote: () => router.push("/presupuestos"),
+      invoice: () => router.push("/facturas-venta"),
       purchase: () => setUpload("PURCHASE"),
-      sale: () => setUpload("SALE"),
       delivery: () => setUpload("DELIVERY"),
       credit: () => setUpload("CREDIT"),
       bulk: () => setBulk(true),
@@ -2385,6 +2386,9 @@ export function Dashboard({
           {section === "calendario" && isAdmin && <TaxCalendar />}
           {section === "catalogo" && isAdmin && <Catalog />}
           {section === "cuentas" && isAdmin && <SupplierAccounts key={pathname} supplierId={pathname.split("/")[2]} />}
+          {section === "contactos" && isAdmin && (
+            <ContactsHub onNewCustomer={() => createContact("customer")} onNewSupplier={() => createContact("supplier")} />
+          )}
           {section === "ventas" && isAdmin && (
             <SalesHub
               pending={s.sales.filter((x) => Number(x.net) + Number(x.tax) - Number(x.withholding) - Number(x.collected) > 0).length}
@@ -2668,6 +2672,7 @@ export function Dashboard({
             "catalogo",
             "nueva-factura",
             "cuentas",
+            "contactos",
             "ventas",
             "facturas-venta",
             "cobros",
@@ -2696,6 +2701,7 @@ export function Dashboard({
               "catalogo",
               "nueva-factura",
               "cuentas",
+              "contactos",
               "ventas",
               "facturas-venta",
               "cobros",
@@ -2764,9 +2770,8 @@ export function Dashboard({
                 { key: "job", label: "Nuevo trabajo", icon: BriefcaseBusiness },
               ] },
               { title: "Ventas", items: [
-                { key: "invoice", label: "Factura de cliente", icon: FileCheck2, main: true },
-                { key: "quote", label: "Presupuesto", icon: FilePlus2 },
-                { key: "sale", label: "Subir factura (foto/PDF)", icon: FileUp },
+                { key: "invoice", label: "Facturas", icon: FileCheck2, main: true },
+                { key: "quote", label: "Presupuestos", icon: FilePlus2 },
               ] },
               { title: "Gastos", items: [
                 { key: "expense", label: "Registrar gasto", icon: Receipt },
@@ -3098,9 +3103,12 @@ function OperationForm({
                     value={values[f.name]}
                     required={f.required !== false}
                     onChange={(e) =>
-                      setValues({ ...values, [f.name]: e.target.value })
+                      e.target.value === "__new__"
+                        ? f.addNew?.open()
+                        : setValues({ ...values, [f.name]: e.target.value })
                     }
                   >
+                    {f.addNew && !f.locked && <option value="__new__">{f.addNew.label}</option>}
                     {(!f.required || !f.options?.length) && (
                       <option value="">
                         {f.options?.length
@@ -3316,7 +3324,7 @@ function UploadForm({
               }}
             >
               {(isAdmin
-                ? ["PURCHASE", "CREDIT", "DELIVERY", "SALE", "PHOTO"]
+                ? ["PURCHASE", "CREDIT", "DELIVERY", "PHOTO"]
                 : ["DELIVERY", "PHOTO"]
               ).map((k) => (
                 <option key={k} value={k}>
