@@ -29,6 +29,9 @@ const ext = (mime: string) =>
     ? "pdf"
     : (mime.split("/")[1]?.replace("jpeg", "jpg") ?? "bin");
 
+// Un abono de proveedor resta de las compras y del IVA soportado.
+const sign = (d: { kind: string }) => (d.kind === "CREDIT" ? -1 : 1);
+
 export async function quarterReport(companyId: string, period: Period) {
   const between = range(period);
   const [received, issued, deliveries, overheads, hours, pending, company] =
@@ -36,7 +39,7 @@ export async function quarterReport(companyId: string, period: Period) {
       db.document.findMany({
         where: {
           companyId,
-          kind: "PURCHASE",
+          kind: { in: ["PURCHASE", "CREDIT"] },
           status: "CONFIRMED",
           date: between,
         },
@@ -104,8 +107,8 @@ export async function quarterReport(companyId: string, period: Period) {
     salesTax = sum(issued.map((s) => s.tax.toString())),
     withheld = sum(issued.map((s) => s.withholding.toString())),
     collected = sum(issued.map((s) => s.collected.toString())),
-    buyNet = sum(received.map((d) => d.net?.toString() ?? 0)),
-    buyTax = sum(received.map((d) => d.tax?.toString() ?? 0)),
+    buyNet = sum(received.map((d) => dec(d.net?.toString() ?? 0).mul(sign(d)))),
+    buyTax = sum(received.map((d) => dec(d.tax?.toString() ?? 0).mul(sign(d)))),
     ovNet = sum(overheads.map((o) => o.amount.toString())),
     ovTax = sum(overheads.map((o) => o.tax.toString())),
     labor = sum(
@@ -156,10 +159,10 @@ export async function quarterReport(companyId: string, period: Period) {
       date: day(d.date),
       supplier: d.supplier?.name ?? "",
       supplierTaxId: d.supplier?.taxId ?? "",
-      number: d.number ?? "",
-      net: money(d.net),
-      tax: money(d.tax),
-      total: cents(dec(money(d.net)).plus(money(d.tax))),
+      number: d.kind === "CREDIT" ? `${d.number ?? ""} (abono)` : (d.number ?? ""),
+      net: cents(dec(money(d.net)).mul(sign(d))),
+      tax: cents(dec(money(d.tax)).mul(sign(d))),
+      total: cents(dec(money(d.net)).plus(money(d.tax)).mul(sign(d))),
       file: d.filename,
       mime: d.mime,
     })),

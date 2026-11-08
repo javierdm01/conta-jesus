@@ -18,7 +18,7 @@ export async function POST(req:Request){
     const form=await new Request(req.url,{method:"POST",headers:{"content-type":req.headers.get("content-type")??""},body:Buffer.concat(chunks)}).formData();
     const file=form.get("file"),kind=String(form.get("kind")),jobId=String(form.get("jobId")??"");
     if(!(file instanceof File)||!file.size||file.size>20*1024*1024)throw new AppError("Selecciona un PDF o una imagen de hasta 20 MB.");
-    if(!["PURCHASE","DELIVERY","SALE","PHOTO","EXPENSE"].includes(kind))throw new AppError("Tipo de documento no válido.");
+    if(!["PURCHASE","CREDIT","DELIVERY","SALE","PHOTO","EXPENSE","AUTO"].includes(kind))throw new AppError("Tipo de documento no válido.");
     if(u.role!=="ADMIN"&&kind!=="DELIVERY"&&kind!=="PHOTO")throw new AppError("El técnico puede subir albaranes y fotografías.",403);
     if(jobId)await accessibleJob(u,jobId);else if(u.role!=="ADMIN")throw new AppError("Selecciona el trabajo.");
     let bytes=Buffer.from(await file.arrayBuffer());let mime:string,ext:string;

@@ -1,0 +1,1 @@
+ALTER TABLE "Document" ADD COLUMN "relatedIds" TEXT[] DEFAULT ARRAY[]::TEXT[];

@@ -198,6 +198,8 @@ model Document {
   date         DateTime?
   net          Decimal?       @db.Decimal(14, 2)
   tax          Decimal?       @db.Decimal(14, 2)
+  relatedIds   String[]       @default([])
+  refs         String[]       @default([])
   supersedesId String?        @unique
   supersedes   Document?      @relation("Replacement", fields: [supersedesId], references: [id])
   replacedBy   Document?      @relation("Replacement")

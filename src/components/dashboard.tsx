@@ -29,6 +29,8 @@ import {
   Trash2,
   Euro,
   Wallet,
+  FileMinus2,
+  FolderUp,
   BookOpen,
   FileUp,
   TrendingUp,
@@ -64,6 +66,9 @@ import { MaterialPicker } from "./material-picker";
 import { PersonPicker, type Person } from "./person-picker";
 import { uploadDocument } from "@/lib/optimize-upload";
 const Catalog = dynamic(() => import("./catalog"), { loading: () => <PageSkeleton /> });
+const BulkUpload = dynamic(() => import("./bulk-upload"), { loading: () => <PageSkeleton /> });
+const CreditReview = dynamic(() => import("./inventory/credit-review"), { loading: () => <PageSkeleton /> });
+const SupplierAccounts = dynamic(() => import("./supplier-accounts"), { loading: () => <PageSkeleton /> });
 const InvoicePage = dynamic(() => import("./invoice-page"), { loading: () => <PageSkeleton /> });
 const HomeWidgets = dynamic(() => import("./home-widgets"), { ssr: false, loading: () => <PageSkeleton /> });
 const SalesHub = dynamic(() => import("./sales-hub"), { loading: () => <PageSkeleton /> });
@@ -141,6 +146,7 @@ const nav = [
   { href: "/inventario", label: "Almacén", icon: Package },
   { href: "/clientes", label: "Clientes", icon: Users },
   { href: "/proveedores", label: "Proveedores", icon: Truck },
+  { href: "/cuentas", label: "Cuentas de proveedores", icon: Calculator },
   { href: "/beneficios", label: "Beneficios", icon: ChartNoAxesCombined },
   { href: "/horas", label: "Horas", icon: Clock },
   { href: "/gastos", label: "Gastos", icon: Wallet },
@@ -152,7 +158,9 @@ const nav = [
 // Cuatro destinos principales; lo demás va en el menú del perfil (2 clics).
 const primaryHrefs = ["/", "/trabajos", "/ventas", "/inventario", "/facturas"];
 const kindLabel: Record<string, string> = {
+  AUTO: "Documento (detectando tipo)",
   PURCHASE: "Factura de compra",
+  CREDIT: "Abono de proveedor",
   DELIVERY: "Albarán",
   SALE: "Factura de cliente",
   PHOTO: "Fotografía",
@@ -272,6 +280,9 @@ export function Dashboard({
     [query, setQuery] = useState(""),
     [modal, setModal] = useState<Modal | null>(null),
     [upload, setUpload] = useState<string | null>(null),
+    [bulk, setBulk] = useState(false),
+    [archiving, setArchiving] = useState(false),
+    [archiveResult, setArchiveResult] = useState<{ archived: number; skipped: { id: string; name: string; reason: string }[] } | null>(null),
     [review, setReview] = useState<Doc | null>(null),
     [add, setAdd] = useState(false),
     [menu, setMenu] = useState(false),
@@ -788,6 +799,8 @@ export function Dashboard({
       purchase: () => setUpload("PURCHASE"),
       sale: () => setUpload("SALE"),
       delivery: () => setUpload("DELIVERY"),
+      credit: () => setUpload("CREDIT"),
+      bulk: () => setBulk(true),
       photo: () => setUpload("PHOTO"),
       expense: () => setExpense(true),
     };
@@ -1988,6 +2001,33 @@ export function Dashboard({
                     antes de guardar.
                   </p>
                 </div>
+                {isAdmin && (
+                  <div className="actions">
+                    <Button variant="outline" onClick={() => setBulk(true)}>
+                      <FolderUp size={16} />
+                      Subir varios o una carpeta
+                    </Button>
+                    {s.documents.some((d) => d.status === "REVIEW" && ["PURCHASE", "CREDIT"].includes(d.kind)) && (
+                      <Button
+                        loading={archiving}
+                        onClick={async () => {
+                          setArchiving(true);
+                          try {
+                            setArchiveResult(await request("/api/operations/purchase-archive", {}));
+                            await load();
+                          } catch (e) {
+                            setError((e as Error).message);
+                          } finally {
+                            setArchiving(false);
+                          }
+                        }}
+                      >
+                        Archivar facturas y abonos correctos (
+                        {s.documents.filter((d) => d.status === "REVIEW" && ["PURCHASE", "CREDIT"].includes(d.kind)).length})
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
               {documentActions}
               <div className="document-tabs" aria-label="Mostrar documentos">
@@ -2135,7 +2175,7 @@ export function Dashboard({
                           <th>Contacto</th>
                           <th>Condiciones</th>
                           <th>Documentos</th>
-                          <th>Compras netas</th>
+                          <th>Cuentas</th>
                           <th />
                         </tr>
                       </thead>
@@ -2165,18 +2205,9 @@ export function Dashboard({
                                 }
                               </td>
                               <td>
-                                {euro(
-                                  sum(
-                                    s.documents
-                                      .filter(
-                                        (d) =>
-                                          d.supplierId === x.id &&
-                                          d.kind === "PURCHASE" &&
-                                          d.status === "CONFIRMED",
-                                      )
-                                      .map((d) => d.net ?? 0),
-                                  ).toString(),
-                                )}
+                                <Link href={`/cuentas/${x.id}`} className="text-button">
+                                  Ver cuentas
+                                </Link>
                               </td>
                               <td>
                                 <button
@@ -2353,6 +2384,7 @@ export function Dashboard({
           )}
           {section === "calendario" && isAdmin && <TaxCalendar />}
           {section === "catalogo" && isAdmin && <Catalog />}
+          {section === "cuentas" && isAdmin && <SupplierAccounts key={pathname} supplierId={pathname.split("/")[2]} />}
           {section === "ventas" && isAdmin && (
             <SalesHub
               pending={s.sales.filter((x) => Number(x.net) + Number(x.tax) - Number(x.withholding) - Number(x.collected) > 0).length}
@@ -2635,6 +2667,7 @@ export function Dashboard({
             "calendario",
             "catalogo",
             "nueva-factura",
+            "cuentas",
             "ventas",
             "facturas-venta",
             "cobros",
@@ -2662,6 +2695,7 @@ export function Dashboard({
               "calendario",
               "catalogo",
               "nueva-factura",
+              "cuentas",
               "ventas",
               "facturas-venta",
               "cobros",
@@ -2721,6 +2755,8 @@ export function Dashboard({
               { title: "Documentos", items: [
                 { key: "delivery", label: "Subir albarán", icon: Truck, main: true },
                 { key: "purchase", label: "Subir factura de proveedor", icon: Files, main: true },
+                { key: "credit", label: "Subir abono de proveedor", icon: FileMinus2 },
+                { key: "bulk", label: "Subir varios o una carpeta", icon: FolderUp },
               ] },
               { title: "Trabajo", items: [
                 { key: "cost", label: "Material usado", icon: Package },
@@ -2853,7 +2889,27 @@ export function Dashboard({
           }}
         />
       )}
-      {review && (
+      {bulk && <BulkUpload close={() => setBulk(false)} done={load} />}
+      {archiveResult && (
+        <Dialog open title="Resultado del archivado" onOpenChange={(v) => !v && setArchiveResult(null)}>
+          <p>
+            <strong>{archiveResult.archived}</strong> documentos archivados en las cuentas del proveedor.
+            {archiveResult.skipped.length > 0 && ` ${archiveResult.skipped.length} necesitan revisión manual:`}
+          </p>
+          {archiveResult.skipped.length > 0 && (
+            <ul className="small-note" style={{ maxHeight: 280, overflow: "auto", margin: "10px 0", paddingLeft: 18 }}>
+              {archiveResult.skipped.map((x) => (
+                <li key={x.id}><strong>{x.name}</strong>: {x.reason}</li>
+              ))}
+            </ul>
+          )}
+          <div className="form-footer">
+            <Button onClick={() => setArchiveResult(null)}>Entendido</Button>
+          </div>
+        </Dialog>
+      )}
+      {review?.kind === "CREDIT" && <CreditReview doc={review} state={s} close={() => setReview(null)} saved={saved} />}
+      {review && review.kind !== "CREDIT" && (
         <StockDocumentReview
           doc={review}
           state={s}
@@ -3194,6 +3250,8 @@ function UploadForm({
           ? "Subir albarán"
           : type === "PURCHASE"
             ? "Subir factura de proveedor"
+            : type === "CREDIT"
+              ? "Subir abono de proveedor"
             : type === "SALE"
               ? "Subir factura de cliente"
               : "Añadir fotografía"
@@ -3227,7 +3285,9 @@ function UploadForm({
             ? "Haz una foto o elige el archivo. Los precios pueden quedar pendientes hasta que llegue la factura."
             : type === "PURCHASE"
               ? "Haz una foto o elige el PDF. Después podrás asociar la factura a tus albaranes."
-              : "Haz una foto o elige un archivo para continuar."}
+              : type === "CREDIT"
+                ? "Sube el abono (nota de crédito) del proveedor. Después lo asociarás a las facturas o albaranes que corrige."
+                : "Haz una foto o elige un archivo para continuar."}
         </p>
         {!isAdmin && (
           <label>
@@ -3256,7 +3316,7 @@ function UploadForm({
               }}
             >
               {(isAdmin
-                ? ["PURCHASE", "DELIVERY", "SALE", "PHOTO"]
+                ? ["PURCHASE", "CREDIT", "DELIVERY", "SALE", "PHOTO"]
                 : ["DELIVERY", "PHOTO"]
               ).map((k) => (
                 <option key={k} value={k}>

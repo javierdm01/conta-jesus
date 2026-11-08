@@ -1,0 +1,1 @@
+ALTER TABLE "Document" ADD COLUMN "refs" TEXT[] DEFAULT ARRAY[]::TEXT[];

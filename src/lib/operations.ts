@@ -12,6 +12,7 @@ import { inventoryOperation } from "./inventory";
 import { purchaseOrderOperation } from "./purchase-orders";
 import { userOperation } from "./users";
 import { catalogOperation } from "./catalog";
+import { purchaseOperation } from "./purchases";
 import { deleteDocuments } from "./document-delete";
 
 type Tx = Prisma.TransactionClient;
@@ -43,6 +44,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
   if (action.startsWith("order-"))
     return purchaseOrderOperation(u, action, input);
   if (action.startsWith("user-")) return userOperation(u, action, input);
+  if (action.startsWith("credit-") || action.startsWith("purchase-")) return purchaseOperation(u, action, input);
   if (action.startsWith("catalog-") || action.startsWith("template-"))
     return catalogOperation(u, action, input);
   // Técnicos y responsable; las reglas de propiedad se comprueban dentro.

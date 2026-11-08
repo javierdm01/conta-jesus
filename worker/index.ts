@@ -8,6 +8,8 @@ import sharp from "sharp";
 import { Worker } from "bullmq";
 import { redisConnection } from "../src/lib/queue";
 import { parseOcr } from "../src/lib/ocr";
+import { detectKind } from "../src/lib/document-kind";
+import { parseSoneparPdf } from "../src/lib/sonepar";
 import { ocrImage } from "./ocr-image";
 import { scanPage } from "./scan-page";
 import { keepFailed, pruneFailed } from "./failed-store";
@@ -223,7 +225,11 @@ ${scanned.trim() ? scanned : native}`;
       where: { companyId: document.companyId },
       select: { id: true, name: true, taxId: true },
     });
-    const parsed = parseOcr(text, suppliers, doc.kind);
+    // Subida masiva: el tipo se decide por el título del documento.
+    const kind = doc.kind === "AUTO" ? detectKind(text) : doc.kind;
+    const parsed = parseOcr(text, suppliers, kind);
+    const so = parseSoneparPdf(text);
+    if (so?.consistent) Object.assign(parsed, { number: so.number, date: so.date, net: so.net, tax: so.tax });
     let evidence;
     try {
       evidence = buildEvidence(parsed, pageData);
@@ -243,6 +249,7 @@ ${scanned.trim() ? scanned : native}`;
           text: text.slice(0, 1_000_000),
           suggestion: JSON.parse(JSON.stringify(suggestion)),
           status: "REVIEW",
+          ...(doc.kind === "AUTO" ? { kind } : {}),
           lockedUntil: null,
           lockToken: null,
           error: null,
