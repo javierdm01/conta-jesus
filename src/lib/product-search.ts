@@ -22,6 +22,12 @@ export function matchesSearch(
       (word) => text.includes(word) || compact.some((v) => v.includes(word)),
     );
 }
+/** Precio de compra por unidad (coste real, sin IVA). */
+export function purchasePrice(totalValue: string | null | undefined, received: string) {
+  if (totalValue == null || dec(received).lte(0)) return null;
+  return cents(dec(totalValue).div(received));
+}
+/** Precio de venta: compra + 30 %. */
 export function recommendedPrice(
   totalValue: string | null | undefined,
   received: string,

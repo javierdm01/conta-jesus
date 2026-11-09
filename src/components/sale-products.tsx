@@ -9,6 +9,8 @@ export type SaleProduct = {
   description: string;
   unit: string;
   recommendedPrice?: string | null;
+  brand?: string | null;
+  location?: string | null;
   code?: string;
   reference?: string;
 };

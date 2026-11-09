@@ -48,15 +48,11 @@ export const id = z.string().min(1).max(100),
   requestKey = z.string().uuid();
 export const expenseCategories = ["AUTONOMO", "SEGURO", "VEHICULO", "COMBUSTIBLE", "DIETAS", "OTHER"] as const;
 export const statuses = [
-  "Pendiente de presupuesto",
-  "Presupuestado",
-  "Aprobado",
-  "Programado",
-  "En ejecución",
-  "Pendiente de materiales",
+  "Pendiente",
+  "En proceso",
   "Finalizado",
   "Facturado",
-  "Cerrado",
+  "Cobrado",
 ] as const;
 export const services = [
   "Instalaciones eléctricas",

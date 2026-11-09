@@ -20,6 +20,10 @@ services:
       start_period: 40s
   worker:
     logging: *logging
+  whisper:
+    logging: *logging
+  tts:
+    logging: *logging
   backup:
     logging: *logging
   caddy:

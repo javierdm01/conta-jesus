@@ -2,6 +2,7 @@ import type { TemplateLine } from "./workspace-types";
 import { db } from "./db";
 import { type Actor } from "./access";
 import { cents, dec, profitability, sum } from "./money";
+import { jobStatus } from "./job-status";
 const stockSelect = {
   select: {
     id: true,
@@ -23,7 +24,7 @@ export async function getState(u: Actor) {
         select: { name: true },
       }),
       db.job.findMany({
-        where: { companyId, workerId: u.worker?.id ?? "none" },
+        where: { companyId, workerId: u.worker?.id ?? "none", archivedAt: null },
         select: {
           id: true,
           name: true,
@@ -31,6 +32,9 @@ export async function getState(u: Actor) {
           address: true,
           service: true,
           status: true,
+          finishedAt: true,
+          _count: { select: { hours: true, costs: { where: { reversed: false } }, stockMovements: { where: { kind: "USE" } } } },
+          sales: { select: { net: true, tax: true, withholding: true, collected: true } },
           plannedAt: true,
           customer: { select: { name: true, phone: true } },
           worker: { select: { name: true } },
@@ -70,7 +74,7 @@ export async function getState(u: Actor) {
     return {
       user: { id: u.id, name: u.name, role: u.role, workerId: u.worker?.id },
       company,
-      jobs: jobs.map((j) => ({ ...j, costs: [], quotes: [], sales: [] })),
+      jobs: jobs.map(({ _count, sales, ...j }) => ({ ...j, status: jobStatus({ status: j.status, finishedAt: j.finishedAt, hasActivity: _count.hours + _count.costs + _count.stockMovements > 0, sales }), costs: [], quotes: [], sales: [] })),
       documents,
       customers: [],
       suppliers: [],
@@ -171,6 +175,7 @@ export async function getState(u: Actor) {
     const { stockMovements, ...job } = j;
     return {
       ...job,
+      status: jobStatus({ status: j.status, finishedAt: j.finishedAt, hasActivity: j.hours.length + j.costs.length + stockMovements.length > 0, sales: j.sales }),
       pendingStockCosts: stockMovements.filter((m) =>
         dec(m.quantity.toString()).gt(
           sum(m.returns.map((r) => r.quantity.toString())),

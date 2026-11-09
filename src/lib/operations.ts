@@ -135,6 +135,18 @@ export async function operate(u: Actor, action: string, input: unknown) {
       return row;
     });
   }
+  if (action === "job-archive" || action === "job-restore") {
+    admin(u);
+    const { jobId } = z.object({ jobId: v.id }).parse(input);
+    return serial(async (tx) => {
+      const job = await tx.job.findFirst({ where: { id: jobId, companyId }, select: { id: true, archivedAt: true } });
+      if (!job) throw new AppError("Trabajo no encontrado.", 404);
+      const archivedAt = action === "job-archive" ? (job.archivedAt ?? new Date()) : null;
+      await tx.job.update({ where: { id: job.id }, data: { archivedAt } });
+      await audit(tx, u, action === "job-archive" ? "Retirar trabajo" : "Recuperar trabajo", job.id);
+      return { id: job.id };
+    });
+  }
   if (action === "job" || action === "jobUpdate") {
     admin(u);
     const d = z
@@ -181,7 +193,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
   }
   if (action === "status") {
     const d = z
-      .object({ jobId: v.id, status: z.enum(v.statuses) })
+      .object({ jobId: v.id, status: z.enum(["Finalizado", "En proceso"]) })
       .parse(input);
     await accessibleJob(u, d.jobId);
     if (u.role !== "ADMIN" && d.status !== "Finalizado")
@@ -385,6 +397,25 @@ export async function operate(u: Actor, action: string, input: unknown) {
       });
       await audit(tx, u, "Registrar factura de cliente", row.id);
       return row;
+    });
+  }
+  if (action === "sale-notes" || action === "sale-attach" || action === "sale-detach") {
+    admin(u);
+    const { saleId } = z.object({ saleId: v.id }).parse(input);
+    const notes = action === "sale-notes" ? z.object({ notes: z.string().trim().max(2000) }).parse(input).notes : undefined;
+    const documentId = action !== "sale-notes" ? z.object({ documentId: v.id }).parse(input).documentId : undefined;
+    return serial(async (tx) => {
+      const sale = await tx.sale.findFirst({ where: { id: saleId, companyId }, select: { id: true } });
+      if (!sale) throw new AppError("Factura no encontrada.", 404);
+      if (notes !== undefined) await tx.sale.update({ where: { id: sale.id }, data: { internalNotes: notes } });
+      if (documentId) {
+        const doc = await tx.document.findFirst({ where: { id: documentId, companyId }, select: { id: true } });
+        if (!doc) throw new AppError("Documento no encontrado.", 404);
+        if (action === "sale-attach") await tx.saleAttachment.upsert({ where: { saleId_documentId: { saleId, documentId } }, create: { saleId, documentId }, update: {} });
+        else await tx.saleAttachment.deleteMany({ where: { saleId, documentId } });
+      }
+      await audit(tx, u, action === "sale-notes" ? "Actualizar notas internas de factura" : action === "sale-attach" ? "Adjuntar documento a factura" : "Desvincular documento de factura", sale.id);
+      return { id: sale.id };
     });
   }
   if (action === "payment") {

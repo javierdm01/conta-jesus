@@ -25,7 +25,7 @@ export async function optimizeFile(file: File, kind: "document" | "photo" = "doc
 
 export async function uploadDocument(file: File, fields: Record<string, string>) {
   const form = new FormData();
-  form.set("file", await optimizeFile(file, fields.kind === "PHOTO" || fields.kind === "EXPENSE" ? "photo" : "document"));
+  form.set("file", fields.kind === "ATTACHMENT" ? file : await optimizeFile(file, fields.kind === "PHOTO" || fields.kind === "EXPENSE" ? "photo" : "document"));
   for (const [k, v] of Object.entries(fields)) if (v) form.set(k, v);
   const res = await fetch("/api/documents", { method: "POST", body: form });
   const data = await res.json();

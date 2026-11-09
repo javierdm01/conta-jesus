@@ -8,7 +8,7 @@ import { dec, sum, cents, lineNet, documentLineNet } from "./money";
 import { allocateDocumentValue } from "./document-values";
 import { portion, quantityForUnit, stockGroupKey } from "./inventory-math";
 import { productFamily } from "./ocr";
-import { recommendedPrice } from "./product-search";
+import { purchasePrice, recommendedPrice } from "./product-search";
 
 type Tx = Prisma.TransactionClient;
 function allocate(values: string[], target: string) {
@@ -957,6 +957,7 @@ export async function inventoryState(u: Actor) {
         ...(adminRole
           ? {
               totalValue: l.totalValue?.toString() ?? null,
+              purchasePrice: purchasePrice(l.totalValue?.toString(), l.received.toString()),
               recommendedPrice: recommendedPrice(
                 l.totalValue?.toString(),
                 l.received.toString(),

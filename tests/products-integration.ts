@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile, unlink } from "node:fs/promises";
-import { company, db, origin } from "./docs-harness";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { company, db, origin, docDir } from "./docs-harness";
 
 const fixturePath = "data/products-fixture.json";
 async function clearCompanies(ids: string[]) {
@@ -9,6 +11,7 @@ async function clearCompanies(ids: string[]) {
     const co = await db.company.findUnique({ where: { id } });
     if (!co) continue;
     assert.ok(co.name.startsWith("EMPRESA DE PRUEBA PRODUCTOS-"));
+    const attachments = await db.document.findMany({ where: { companyId: id, kind: "ATTACHMENT" }, select: { filename: true } });
     await db.$transaction(async (tx) => {
       await tx.sale.deleteMany({ where: { companyId: id } });
       await tx.documentLine.deleteMany({
@@ -25,6 +28,10 @@ async function clearCompanies(ids: string[]) {
       await tx.customer.deleteMany({ where: { companyId: id } });
       await tx.company.delete({ where: { id } });
     });
+    for (const {filename} of attachments) {
+      assert.match(filename, /^[0-9a-f-]{36}\.(pdf|jpg|png|webp)$/i);
+      await unlink(path.join(docDir(), filename)).catch((e: NodeJS.ErrnoException) => { if (e.code !== 'ENOENT') throw e; });
+    }
   }
 }
 async function main() {
@@ -236,6 +243,53 @@ async function main() {
     });
     assert.equal(confirmed.status(), 200, await confirmed.text());
     const invoice = await confirmed.json();
+    const jobState = async () => (await (await a.admin.get('/api/state')).json()).jobs.find((j:{id:string})=>j.id===a.jobId).status;
+    assert.equal(await jobState(), 'Facturado');
+    assert.equal((await a.admin.post('/api/operations/payment', {data:{saleId:invoice.id,collected:'31.46'}})).status(), 200);
+    assert.equal(await jobState(), 'Facturado');
+    assert.equal((await a.admin.post('/api/operations/status', {data:{jobId:a.jobId,status:'Finalizado'}})).status(), 200);
+    assert.equal(await jobState(), 'Cobrado');
+    assert.equal((await a.admin.post('/api/operations/payment', {data:{saleId:invoice.id,collected:'0'}})).status(), 200);
+    assert.equal(await jobState(), 'Facturado');
+    assert.equal((await a.admin.post('/api/operations/status', {data:{jobId:a.jobId,status:'En proceso'}})).status(), 200);
+    assert.equal((await tech.post('/api/operations/sale-notes',{data:{saleId:invoice.id,notes:'privado'}})).status(),403);
+    assert.equal((await b.admin.post('/api/operations/sale-notes',{data:{saleId:invoice.id,notes:'privado'}})).status(),404);
+    assert.equal((await a.admin.post('/api/operations/sale-notes',{data:{saleId:invoice.id,notes:'Nota interna PRUEBA'}})).status(),200);
+    assert.equal((await db.sale.findUniqueOrThrow({where:{id:invoice.id}})).internalNotes,'Nota interna PRUEBA');
+    const generatedPdf = await a.admin.get(`/api/sales/${invoice.id}/pdf`);
+    assert.equal(generatedPdf.status(),200);
+    const tmpPdf = path.join((await import('node:os')).tmpdir(), `factura-${randomUUID()}.pdf`);
+    await writeFile(tmpPdf, await generatedPdf.body());
+    const extracted = spawnSync('pdftotext',[tmpPdf,'-'],{encoding:'utf8'});
+    await unlink(tmpPdf);
+    assert.equal(extracted.status,0,extracted.stderr);
+    assert.ok(!extracted.stdout.includes('Nota interna PRUEBA'));
+    const pdf = Buffer.from('%PDF-1.4\n% documento de prueba '+randomUUID()+'\n%%EOF');
+    const uploaded = await a.admin.post('/api/documents',{multipart:{kind:'ATTACHMENT',saleId:invoice.id,file:{name:'adjunto-prueba.pdf',mimeType:'application/pdf',buffer:pdf}}});
+    assert.equal(uploaded.status(),201,await uploaded.text());
+    const attachedId = (await uploaded.json()).id;
+    assert.equal((await db.document.findUniqueOrThrow({where:{id:attachedId}})).status,'ARCHIVED');
+    assert.deepEqual(await (await a.admin.get(`/api/documents/${attachedId}`)).body(),pdf);
+    assert.equal((await b.admin.get(`/api/documents/${attachedId}`)).status(),404);
+    assert.equal((await tech.get(`/api/sales/${invoice.id}/attachments`)).status(),403);
+    assert.equal((await b.admin.get(`/api/sales/${invoice.id}/attachments`)).status(),404);
+    assert.equal((await (await a.admin.get(`/api/sales/${invoice.id}/attachments`)).json()).length,1);
+    assert.equal((await a.admin.post('/api/operations/document-delete',{data:{ids:[attachedId]}})).status(),409);
+    assert.equal((await a.admin.post('/api/operations/sale-detach',{data:{saleId:invoice.id,documentId:attachedId}})).status(),200);
+    assert.ok(await db.document.findUnique({where:{id:attachedId}}));
+    assert.equal((await a.admin.post('/api/operations/sale-attach',{data:{saleId:invoice.id,documentId:attachedId}})).status(),200);
+    assert.equal((await tech.get('/api/analytics?period=month')).status(), 403);
+    const otherAnalytics = await b.admin.get('/api/analytics?period=month');
+    assert.equal(otherAnalytics.status(), 200);
+    assert.equal((await otherAnalytics.json()).income, '0.00');
+    const analyticsResponse = await a.admin.get('/api/analytics?period=year');
+    assert.equal(analyticsResponse.status(), 200, await analyticsResponse.text());
+    const analytics = await analyticsResponse.json();
+    if (analytics.start <= sale.date && analytics.end >= sale.date) {
+      assert.equal(analytics.income, '26.00');
+      assert.equal(analytics.materialRevenue, '26.00');
+      assert.equal(analytics.unknownRevenue, '0.00');
+    }
     assert.equal(
       (await a.admin.post("/api/operations/sale", { data: sale })).status(),
       409,
@@ -256,10 +310,33 @@ async function main() {
     assert.equal(edited.location, payload.location);
     assert.equal(edited.brand, payload.brand);
     assert.equal(edited.model, payload.model);
+    assert.equal((await tech.post("/api/operations/stock-archive", { data: { lotId: lot.id } })).status(), 403);
+    assert.equal((await b.admin.post("/api/operations/stock-archive", { data: { lotId: lot.id } })).status(), 404);
+    assert.equal((await a.admin.post("/api/operations/stock-archive", { data: { lotId: lot.id } })).status(), 200);
+    const archived = await db.stockLot.findUniqueOrThrow({ where: { id: lot.id } });
+    assert.ok(archived.archivedAt);
+    assert.equal(archived.onHand.toString(), "20");
+    assert.equal(archived.code, lot.code);
+    assert.ok(!(await (await a.admin.get("/api/search/products?q=salon")).json()).items.some((x: { id: string }) => x.id === lot.id));
+    assert.equal((await a.admin.post("/api/operations/stock-restore", { data: { lotId: lot.id } })).status(), 200);
+    assert.equal((await db.stockLot.findUniqueOrThrow({ where: { id: lot.id } })).archivedAt, null);
     const snapshot = await db.saleLine.findFirstOrThrow({
       where: { saleId: invoice.id },
     });
     assert.equal(snapshot.description, payload.alias);
+    assert.equal((await tech.post('/api/operations/job-archive', { data: { jobId: a.jobId } })).status(), 403);
+    assert.equal((await b.admin.post('/api/operations/job-archive', { data: { jobId: a.jobId } })).status(), 404);
+    assert.equal((await a.admin.post('/api/operations/job-archive', { data: { jobId: a.jobId } })).status(), 200);
+    const removedJob = await db.job.findUniqueOrThrow({ where: { id: a.jobId } });
+    assert.ok(removedJob.archivedAt);
+    assert.equal((await db.sale.findUniqueOrThrow({where:{id:invoice.id}})).jobId, a.jobId);
+    const archivedState = await (await a.admin.get('/api/state')).json();
+    assert.ok(archivedState.jobs.find((j: {id:string;archivedAt:string|null}) => j.id === a.jobId)?.archivedAt);
+    assert.ok(archivedState.sales.some((s: {id:string}) => s.id === invoice.id));
+    const techState = await (await tech.get('/api/state')).json();
+    assert.ok(!techState.jobs.some((j: {id:string}) => j.id === a.jobId));
+    assert.equal((await a.admin.post('/api/operations/job-restore', { data: { jobId: a.jobId } })).status(), 200);
+    assert.equal((await db.job.findUniqueOrThrow({where:{id:a.jobId}})).archivedAt, null);
     assert.equal(
       (
         await db.stockLot.findUniqueOrThrow({ where: { id: lot.id } })

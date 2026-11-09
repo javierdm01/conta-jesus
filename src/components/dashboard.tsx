@@ -29,7 +29,6 @@ import {
   Trash2,
   Euro,
   Wallet,
-  FileMinus2,
   FolderUp,
   BookOpen,
   FileUp,
@@ -40,6 +39,7 @@ import {
   Calculator,
   CalendarDays,
   Receipt,
+  Mic,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import useSWR from "swr";
@@ -59,6 +59,7 @@ const StockDocumentReview = dynamic(
 const PurchaseOrders = dynamic(() => import("./purchase-orders"), { loading: () => <PageSkeleton /> });
 const Quarters = dynamic(() => import("./quarters"), { loading: () => <PageSkeleton /> });
 const Expenses = dynamic(() => import("./expenses"), { loading: () => <PageSkeleton /> });
+const VoiceDialog = dynamic(() => import("./voice-dialog"));
 const ExpenseForm = dynamic(() => import("./expenses").then((m) => m.ExpenseForm));
 import { AppSkeleton, PageSkeleton } from "./skeletons";
 import { QuoteBuilder } from "./quote-builder";
@@ -70,7 +71,7 @@ const BulkUpload = dynamic(() => import("./bulk-upload"), { loading: () => <Page
 const CreditReview = dynamic(() => import("./inventory/credit-review"), { loading: () => <PageSkeleton /> });
 const SupplierAccounts = dynamic(() => import("./supplier-accounts"), { loading: () => <PageSkeleton /> });
 const InvoicePage = dynamic(() => import("./invoice-page"), { loading: () => <PageSkeleton /> });
-const HomeWidgets = dynamic(() => import("./home-widgets"), { ssr: false, loading: () => <PageSkeleton /> });
+const AnalyticsHome = dynamic(() => import("./analytics-home"), { ssr: false, loading: () => <PageSkeleton /> });
 const ContactsHub = dynamic(() => import("./contacts-hub"), { loading: () => <PageSkeleton /> });
 const SalesHub = dynamic(() => import("./sales-hub"), { loading: () => <PageSkeleton /> });
 const InvoiceList = dynamic(() => import("./invoice-list"), { loading: () => <PageSkeleton /> });
@@ -79,6 +80,7 @@ const QuotesList = dynamic(() => import("./quotes-list"), { loading: () => <Page
 const Hours = dynamic(() => import("./hours"), { loading: () => <PageSkeleton /> });
 const TaxCalendar = dynamic(() => import("./tax-calendar"), { loading: () => <PageSkeleton /> });
 const SystemHealth = dynamic(() => import("./system-health"));
+const VoiceUsage = dynamic(() => import("./voice-usage"));
 const ServiceChart = dynamic(() => import("./service-chart"), {
   loading: () => <div className="chart-loading">Preparando gráfico…</div>,
   ssr: false,
@@ -165,6 +167,7 @@ const kindLabel: Record<string, string> = {
   DELIVERY: "Albarán",
   SALE: "Factura de cliente",
   PHOTO: "Fotografía",
+  ATTACHMENT: "Adjunto de factura",
 };
 const docStatus: Record<string, string> = {
   QUEUED: "Preparando lectura",
@@ -172,13 +175,13 @@ const docStatus: Record<string, string> = {
   REVIEW: "Listo para revisar",
   FAILED: "Requiere atención",
   CONFIRMED: "Confirmado",
-  ARCHIVED: "Fotografía guardada",
+  ARCHIVED: "Archivado",
 };
 function Pill({ children }: { children: React.ReactNode }) {
   const text = String(children);
   return (
     <span
-      className={`pill ${/ejecución|Leyendo|Programado/.test(text) ? "blue" : /Finalizado|Cerrado|Confirmado|Aprobado|guardada/.test(text) ? "green" : /Pendiente|cola|atención/.test(text) ? "orange" : ""}`}
+      className={`pill ${/En proceso|Leyendo/.test(text) ? "blue" : /Finalizado|Facturado|Cobrado|Confirmado|Aprobado|guardada/.test(text) ? "green" : /Pendiente|cola|atención/.test(text) ? "orange" : ""}`}
     >
       {children}
     </span>
@@ -288,6 +291,7 @@ export function Dashboard({
     [add, setAdd] = useState(false),
     [menu, setMenu] = useState(false),
     [expense, setExpense] = useState(false),
+    [voice, setVoice] = useState(false),
     [material, setMaterial] = useState(false),
     [quoteBuilder, setQuoteBuilder] = useState(false),
     [toast, setToast] = useState(""),
@@ -333,6 +337,12 @@ export function Dashboard({
     }
   }, [mutate]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const close = (e: MouseEvent) => !(e.target as HTMLElement).closest(".search") && setSearchOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
   const [customerQuery, setCustomerQuery] = useState("");
   const {
     data: productMatches,
@@ -432,6 +442,7 @@ export function Dashboard({
     isAdmin = s.user.role === "ADMIN",
     section = pathname.split("/")[1] ?? "",
     selected = s.jobs.find((j) => j.id === pathname.split("/")[2]);
+  const activeJobs = s.jobs.filter((j) => !j.archivedAt);
   // Ventas agrupa sus pantallas (facturas, presupuestos, cobros, catálogo…); el resto, por su primer segmento.
   const navGroups: Record<string, string[]> = {
     ventas: ["ventas", "facturas-venta", "nueva-factura", "cobros", "presupuestos", "catalogo"],
@@ -452,6 +463,7 @@ export function Dashboard({
     matchesSearch(query, values);
   const jobs = s.jobs.filter(
     (j) =>
+      (filter === "Retirados" ? !!j.archivedAt : !j.archivedAt) &&
       matches(
         j.name,
         j.number,
@@ -461,7 +473,7 @@ export function Dashboard({
         j.plannedAt,
         j.worker?.name,
       ) &&
-      (filter === "Todos" || j.status === filter),
+      (filter === "Todos" || filter === "Retirados" || j.status === filter),
   );
   const allMetrics = s.jobs.flatMap((j) => (j.metrics ? [j.metrics] : [])),
     total = (key: keyof Metrics) =>
@@ -486,8 +498,8 @@ export function Dashboard({
     select(
       "jobId",
       "Trabajo",
-      s.jobs.map((j) => ({ value: j.id, label: `${j.number} · ${j.name}` })),
-      selected?.id,
+      activeJobs.map((j) => ({ value: j.id, label: `${j.number} · ${j.name}` })),
+      selected && !selected.archivedAt ? selected.id : undefined,
     );
   const createJob = () =>
     setModal({
@@ -800,10 +812,10 @@ export function Dashboard({
       invoice: () => router.push("/facturas-venta"),
       purchase: () => setUpload("PURCHASE"),
       delivery: () => setUpload("DELIVERY"),
-      credit: () => setUpload("CREDIT"),
       bulk: () => setBulk(true),
       photo: () => setUpload("PHOTO"),
       expense: () => setExpense(true),
+      voice: () => setVoice(true),
     };
     actions[action]?.();
   };
@@ -814,6 +826,15 @@ export function Dashboard({
     } catch (e) {
       setError((e as Error).message);
     }
+  };
+  const setJobArchived = async (job: Job, archive: boolean) => {
+    if (archive && !window.confirm(`¿Retirar «${job.name}» de la lista? Se conservarán sus facturas, horas, documentos, material y presupuesto. Las reservas de material se mantienen. Podrás recuperarlo desde Retirados.`)) return;
+    try {
+      await request(`/api/operations/${archive ? "job-archive" : "job-restore"}`, { jobId: job.id });
+      await load();
+      setToast(archive ? "Trabajo retirado. Puedes recuperarlo desde Retirados." : "Trabajo recuperado.");
+      if (selected?.id === job.id) router.push("/trabajos");
+    } catch (e) { setError((e as Error).message); }
   };
   const jobTable = (rows: Job[]) =>
     rows.length ? (
@@ -853,12 +874,12 @@ export function Dashboard({
                     <td>{euro(j.metrics?.net)}</td>
                     <td
                       className={
-                        Number(j.metrics?.gross) < 0
+                        Number(j.metrics?.net) > 0 && Number(j.metrics?.gross) < 0
                           ? "text-red-600"
                           : "font-semibold text-teal-800"
                       }
                     >
-                      {euro(j.metrics?.gross)}
+                      {Number(j.metrics?.net) > 0 ? euro(j.metrics?.gross) : "Pendiente de facturar"}
                       <div className="muted">
                         {j.metrics?.margin
                           ? `${j.metrics.margin} % de margen`
@@ -868,6 +889,7 @@ export function Dashboard({
                   </>
                 )}
                 <td>
+                  {isAdmin && <button className="text-button mr-3" aria-label={`${j.archivedAt ? "Recuperar" : "Eliminar de la lista"} ${j.name}`} onClick={(e) => { e.stopPropagation(); void setJobArchived(j, !j.archivedAt); }}>{j.archivedAt ? "Recuperar" : "Eliminar"}</button>}
                   <Link
                     prefetch={true}
                     href={`/trabajos/${j.id}`}
@@ -881,6 +903,8 @@ export function Dashboard({
           </tbody>
         </table>
       </div>
+    ) : filter === "Retirados" ? (
+      <Empty title="No hay trabajos retirados" description="Los trabajos que retires de la lista aparecerán aquí y podrás recuperarlos." />
     ) : (
       <Empty
         title={
@@ -1212,6 +1236,8 @@ export function Dashboard({
         </div>
         <Pill>{j.status}</Pill>
       </div>
+      <p className="small-note mb-5">El estado se actualiza con las horas, materiales, facturas y cobros. «Cobrado» requiere marcar el trabajo como finalizado y cobrar todas sus facturas.</p>
+      {j.archivedAt && <div className="info-banner mb-5">Trabajo retirado. Sus datos e historial se conservan; recupéralo para volver a trabajar con él.</div>}
       {isAdmin && j.metrics && (
         <div className="stats">
           <Stat
@@ -1227,8 +1253,8 @@ export function Dashboard({
           />
           <Stat
             label="Beneficio bruto"
-            value={euro(j.metrics.gross)}
-            note={`Margen: ${j.metrics.margin ?? "—"} %`}
+            value={Number(j.metrics.net) > 0 ? euro(j.metrics.gross) : "Sin facturar"}
+            note={Number(j.metrics.net) > 0 ? `Margen: ${j.metrics.margin ?? "—"} %` : `Aún sin ventas: ${euro(j.metrics.direct)} de costes`}
             highlight
             icon={TrendingUp}
           />
@@ -1238,34 +1264,13 @@ export function Dashboard({
         title="Datos del trabajo"
         action={
           <div className="flex gap-3">
-            {isAdmin && (
+            {isAdmin && !j.archivedAt && (
               <button className="text-button" onClick={() => editJob(j)}>
                 Editar
               </button>
             )}
-            <button
-              className="text-button"
-              onClick={() =>
-                setModal({
-                  title: "Actualizar estado",
-                  action: "status",
-                  fixed: { jobId: j.id },
-                  fields: [
-                    select(
-                      "status",
-                      "Estado",
-                      (isAdmin ? statuses : ["Finalizado"]).map((x) => ({
-                        value: x,
-                        label: x,
-                      })),
-                      isAdmin ? j.status : "Finalizado",
-                    ),
-                  ],
-                })
-              }
-            >
-              Cambiar estado
-            </button>
+            {isAdmin && <button className="text-button" onClick={() => void setJobArchived(j, !j.archivedAt)}>{j.archivedAt ? "Recuperar trabajo" : "Eliminar de la lista"}</button>}
+            {!j.archivedAt && (!(j.finishedAt || j.status === "Finalizado") || isAdmin) && <button className="text-button" onClick={() => run("status", { jobId: j.id, status: (j.finishedAt || j.status === "Finalizado") ? "En proceso" : "Finalizado" })}>{(j.finishedAt || j.status === "Finalizado") ? "Reabrir trabajo" : "Marcar finalizado"}</button>}
           </div>
         }
       >
@@ -1293,7 +1298,7 @@ export function Dashboard({
           </div>
         </div>
       )}
-      <div className="actions mb-6">
+      {!j.archivedAt && <div className="actions mb-6">
         <Button onClick={createHours}>
           <Clock size={16} />
           Registrar horas
@@ -1312,8 +1317,8 @@ export function Dashboard({
             {isAdmin && <button onClick={() => openInvoice()}>Registrar factura</button>}
           </div>
         </details>
-      </div>
-      {!(isAdmin ? j.costs.length : s.documents.some((d) => d.jobId === j.id)) && !j.hours.length && (
+      </div>}
+      {!j.archivedAt && !(isAdmin ? j.costs.length : s.documents.some((d) => d.jobId === j.id)) && !j.hours.length && (
         <p className="small-note mb-6">Aún no hay horas ni materiales en este trabajo. Usa los botones de arriba para añadirlos.</p>
       )}
       <div className="two-col">
@@ -1425,7 +1430,7 @@ export function Dashboard({
                       </div>
                       {q.approved ? (
                         <Pill>Aprobado</Pill>
-                      ) : (
+                      ) : !j.archivedAt ? (
                         <Button
                           variant="outline"
                           size="sm"
@@ -1433,7 +1438,7 @@ export function Dashboard({
                         >
                           Aprobar
                         </Button>
-                      )}
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -1614,8 +1619,118 @@ export function Dashboard({
               aria-label="Buscar en la empresa"
               placeholder="Buscar artículos, alias, referencias, trabajos…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setSearchOpen(true);
+              }}
+              onFocus={() => setSearchOpen(true)}
+              onKeyDown={(e) => e.key === "Escape" && setSearchOpen(false)}
             />
+            <div
+              className="search-pop"
+              onClick={(e) => (e.target as HTMLElement).closest("a") && setSearchOpen(false)}
+            >
+              {query && searchOpen && (() => {
+                const jobHits = activeJobs.filter((j) => matches(j.name, j.number, j.customer.name, j.address, j.service, j.plannedAt)).slice(0, 8);
+                const customerHits = s.customers.filter((x) => matches(x.name, x.taxId, x.phone, x.email, x.address)).slice(0, 8);
+                const supplierHits = s.suppliers.filter((x) => matches(x.name, x.taxId, x.email, x.phone)).slice(0, 8);
+                const docHits = [
+                  ...s.documents.filter((x) => matches(x.number, x.originalName, x.text)),
+                  ...(documentMatches ?? []).filter((d) => !s.documents.some((x) => x.id === d.id && matches(x.number, x.originalName))),
+                ].slice(0, 8);
+                const saleHits = s.sales.filter((x) => matches(x.number, x.description, x.jobName, x.date)).slice(0, 8);
+                const items = searchScope === "company" ? [] : productMatches?.items ?? [];
+                const company = searchScope !== "products";
+                const none = !items.length && !(company && (jobHits.length || customerHits.length || supplierHits.length || docHits.length || saleHits.length));
+                const Section = ({ title, count, children }: { title: string; count: number; children: React.ReactNode }) =>
+                  count ? (
+                    <section className="sr-section">
+                      <h3>{title} <span>{count}</span></h3>
+                      <div className="sr-grid">{children}</div>
+                    </section>
+                  ) : null;
+                return (
+                  <>
+                    <div className="sr-head">
+                      <strong>Resultados para «{query}»</strong>
+                      <select aria-label="Buscar en" value={searchScope} onChange={(e) => setSearchScope(e.target.value)}>
+                        <option value="all">Toda la empresa</option>
+                        <option value="products">Solo artículos</option>
+                        <option value="company">Trabajos, contactos y documentos</option>
+                      </select>
+                      <button type="button" className="text-button" onClick={() => { setQuery(""); setSearchScope("all"); }}>Cerrar</button>
+                    </div>
+                    {(productsSearching || documentsSearching) && <p className="small-note sr-note" role="status">Buscando…</p>}
+                    {(productSearchError || documentSearchError) && <p className="error sr-note" role="alert">No se pudo completar la búsqueda. Vuelve a intentarlo.</p>}
+                    <Section title="Artículos" count={items.length}>
+                      {items.map((p) => (
+                        <Link className="sr-card" key={p.id} href={`/inventario/${p.code}`}>
+                          <strong>{p.alias || p.description}</strong>
+                          {p.alias && <span>{p.description}</span>}
+                          <small>{p.reference || p.code}{p.brand ? ` · ${p.brand}` : ""}</small>
+                          <small>{p.onHand} {p.unit} en almacén{p.location ? ` · ${p.location}` : ""}</small>
+                        </Link>
+                      ))}
+                    </Section>
+                    {company && (
+                      <>
+                        <Section title="Trabajos" count={jobHits.length}>
+                          {jobHits.map((j) => (
+                            <Link className="sr-card" key={j.id} href={`/trabajos/${j.id}`}>
+                              <strong>{j.number} · {j.name}</strong>
+                              <span>{j.customer.name}</span>
+                              <small>{j.address || "Sin dirección"}</small>
+                              <small>{j.service}{j.plannedAt ? ` · ${new Date(j.plannedAt).toLocaleDateString("es-ES")}` : ""}</small>
+                              <Pill>{j.status}</Pill>
+                              {isAdmin && j.metrics && <small>{number(j.metrics.hours)} h · facturado {euro(j.metrics.net)}</small>}
+                            </Link>
+                          ))}
+                        </Section>
+                        <Section title="Clientes" count={customerHits.length}>
+                          {customerHits.map((x) => (
+                            <Link className="sr-card" key={x.id} href="/clientes">
+                              <strong>{x.name}</strong>
+                              <small>{[x.taxId, x.phone].filter(Boolean).join(" · ") || "Sin datos de contacto"}</small>
+                              {x.email && <small>{x.email}</small>}
+                              {x.address && <small>{x.address}</small>}
+                            </Link>
+                          ))}
+                        </Section>
+                        <Section title="Proveedores" count={supplierHits.length}>
+                          {supplierHits.map((x) => (
+                            <Link className="sr-card" key={x.id} href="/proveedores">
+                              <strong>{x.name}</strong>
+                              <small>{[x.taxId, x.phone].filter(Boolean).join(" · ") || "Sin datos de contacto"}</small>
+                              {x.email && <small>{x.email}</small>}
+                            </Link>
+                          ))}
+                        </Section>
+                        <Section title="Documentos" count={docHits.length}>
+                          {docHits.map((x) => (
+                            <a className="sr-card" key={x.id} href={`/api/documents/${x.id}`}>
+                              <strong>{x.number ?? x.originalName}</strong>
+                              {x.number && <small>{x.originalName}</small>}
+                              <Pill>{docStatus[x.status]}</Pill>
+                            </a>
+                          ))}
+                        </Section>
+                        <Section title="Facturas de venta" count={saleHits.length}>
+                          {saleHits.map((x) => (
+                            <Link className="sr-card" key={x.id} href="/facturas-venta">
+                              <strong>{x.number}</strong>
+                              <span>{x.description}</span>
+                              <small>{x.jobName} · {x.date}</small>
+                              <small>{euro(x.net)} sin IVA</small>
+                            </Link>
+                          ))}
+                        </Section>
+                      </>
+                    )}
+                    {none && !productsSearching && !documentsSearching && <p className="small-note sr-note">Nada coincide. Prueba con parte del nombre, referencia, cliente o dirección.</p>}
+                  </>
+                );
+              })()}
+            </div>
           </div>
           <div className="top-right">
             <button className="top-avatar" aria-label="Menú" aria-haspopup="dialog" onClick={() => setMenu(true)}>
@@ -1646,172 +1761,6 @@ export function Dashboard({
               </button>
             </div>
           )}
-          {query && (
-            <Panel
-              title={`Resultados para «${query}»`}
-              subtitle="Trabajos, clientes, direcciones, fechas, documentos, referencias y proveedores"
-            >
-              <div className="global-search-tools">
-                <label>
-                  Buscar en
-                  <select
-                    aria-label="Buscar en"
-                    value={searchScope}
-                    onChange={(e) => setSearchScope(e.target.value)}
-                  >
-                    <option value="all">Toda la empresa</option>
-                    <option value="products">Artículos</option>
-                    <option value="company">
-                      Trabajos, contactos y documentos
-                    </option>
-                  </select>
-                </label>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setQuery("");
-                    setSearchScope("all");
-                  }}
-                >
-                  Cerrar búsqueda
-                </Button>
-              </div>
-              {searchScope !== "company" && (
-                <section
-                  className="global-product-results"
-                  aria-label="Artículos encontrados"
-                >
-                  <h3>
-                    Artículos{" "}
-                    {productMatches ? `(${productMatches.total})` : ""}
-                  </h3>
-                  {productsSearching && (
-                    <p role="status">Buscando artículos…</p>
-                  )}
-                  {productSearchError && (
-                    <p role="alert" className="error">
-                      No se pudo buscar en el almacén. Vuelve a intentarlo.
-                    </p>
-                  )}
-                  {productMatches?.items.map((p) => (
-                    <Link
-                      className="global-product-result"
-                      key={p.id}
-                      href={`/inventario/${p.code}`}
-                    >
-                      <strong>{p.alias || p.description}</strong>
-                      <small>
-                        {p.alias ? `${p.description} · ` : ""}
-                        {p.reference || p.code} · {p.onHand} {p.unit}
-                      </small>
-                    </Link>
-                  ))}
-                  {productMatches?.total === 0 && (
-                    <p>
-                      No hay artículos que coincidan. Puedes buscar por parte
-                      del nombre, alias, marca, ubicación o referencia.
-                    </p>
-                  )}
-                  {productMatches &&
-                    productMatches.total > productMatches.items.length && (
-                      <p>
-                        Mostrando {productMatches.items.length} de{" "}
-                        {productMatches.total}. Añade otra palabra para afinar.
-                      </p>
-                    )}
-                </section>
-              )}
-              <div hidden={searchScope === "products"}>
-                {documentsSearching && (
-                  <p className="small-note p-4" role="status">
-                    Buscando documentos…
-                  </p>
-                )}
-                {documentSearchError && (
-                  <p className="error p-4" role="alert">
-                    No se pudieron buscar los documentos. Vuelve a intentarlo.
-                  </p>
-                )}
-                <div className="record-list">
-                  {s.jobs
-                    .filter((j) =>
-                      matches(
-                        j.name,
-                        j.number,
-                        j.customer.name,
-                        j.address,
-                        j.service,
-                        j.plannedAt,
-                      ),
-                    )
-                    .map((j) => (
-                      <div className="record" key={j.id}>
-                        <Link className="job-link" href={`/trabajos/${j.id}`}>
-                          {j.number} · {j.name}
-                        </Link>
-                        <span>{j.customer.name}</span>
-                      </div>
-                    ))}
-                  {s.suppliers
-                    .filter((x) => matches(x.name, x.taxId, x.email, x.phone))
-                    .map((x) => (
-                      <div className="record" key={x.id}>
-                        <span>Proveedor · {x.name}</span>
-                        <span>{x.phone}</span>
-                      </div>
-                    ))}
-                  {s.customers
-                    .filter((x) =>
-                      matches(x.name, x.taxId, x.phone, x.email, x.address),
-                    )
-                    .map((x) => (
-                      <div className="record" key={`customer-${x.id}`}>
-                        <Link className="job-link" href="/clientes">
-                          Cliente · {x.name}
-                        </Link>
-                        <span>{x.phone}</span>
-                      </div>
-                    ))}
-                  {s.documents
-                    .filter((x) => matches(x.number, x.originalName, x.text))
-                    .map((x) => (
-                      <div className="record" key={x.id}>
-                        <a className="job-link" href={`/api/documents/${x.id}`}>
-                          {x.number ?? x.originalName}
-                        </a>
-                        <Pill>{docStatus[x.status]}</Pill>
-                      </div>
-                    ))}
-                  {documentMatches
-                    ?.filter(
-                      (d) =>
-                        !s.documents.some(
-                          (x) =>
-                            x.id === d.id && matches(x.number, x.originalName),
-                        ),
-                    )
-                    .map((d) => (
-                      <div className="record" key={`search-${d.id}`}>
-                        <a className="job-link" href={`/api/documents/${d.id}`}>
-                          {d.number ?? d.originalName}
-                        </a>
-                        <Pill>{docStatus[d.status]}</Pill>
-                      </div>
-                    ))}
-                  {s.sales
-                    .filter((x) =>
-                      matches(x.number, x.description, x.jobName, x.date),
-                    )
-                    .map((x) => (
-                      <div className="record" key={x.id}>
-                        <span>Factura · {x.number}</span>
-                        <span>{euro(x.net)}</span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            </Panel>
-          )}
           {!section && (
             <>
               <div className="page-head">
@@ -1825,8 +1774,7 @@ export function Dashboard({
               </div>
               {isAdmin ? (
                 <>
-                  {financialStats}
-                  <HomeWidgets sales={s.sales} jobs={s.jobs} overheads={s.overheads} />
+                  <AnalyticsHome />
                 </>
               ) : (
                 <div className="stats">
@@ -1841,7 +1789,7 @@ export function Dashboard({
                     value={String(
                       s.jobs.filter(
                         (j) =>
-                          !["Finalizado", "Facturado", "Cerrado"].includes(
+                          !["Finalizado", "Facturado", "Cobrado"].includes(
                             j.status,
                           ),
                       ).length,
@@ -1875,7 +1823,7 @@ export function Dashboard({
                     }
                   >
                     {jobTable(
-                      jobs.filter((j) => j.status !== "Cerrado").slice(0, 5),
+                      jobs.filter((j) => !["Finalizado", "Facturado", "Cobrado"].includes(j.status)).slice(0, 5),
                     )}
                   </Panel>
                   <Panel
@@ -1900,10 +1848,10 @@ export function Dashboard({
                       title="Cómo mejorar mi negocio"
                       subtitle="Conclusiones basadas en tus registros."
                     >
-                      {s.jobs.some((j) => Number(j.metrics?.gross) < 0) ? (
+                      {s.jobs.some((j) => Number(j.metrics?.net) > 0 && Number(j.metrics?.gross) < 0) ? (
                         <div className="record-list">
                           {s.jobs
-                            .filter((j) => Number(j.metrics?.gross) < 0)
+                            .filter((j) => Number(j.metrics?.net) > 0 && Number(j.metrics?.gross) < 0)
                             .map((j) => (
                               <div className="record" key={j.id}>
                                 <div>
@@ -1971,7 +1919,7 @@ export function Dashboard({
                     value={filter}
                     onChange={(e) => setFilter(e.target.value)}
                   >
-                    {["Todos", ...statuses].map((x) => (
+                    {["Todos", ...statuses, ...(isAdmin ? ["Retirados"] : [])].map((x) => (
                       <option key={x}>{x}</option>
                     ))}
                   </select>
@@ -2368,7 +2316,7 @@ export function Dashboard({
           )}
           {section === "inventario" && (
             <InventoryWorkspace
-              jobs={s.jobs}
+              jobs={activeJobs}
               selectedCode={pathname.split("/")[2]}
               onChanged={load}
               onInvoiceProduct={(product) => createSale(undefined, product)}
@@ -2400,8 +2348,11 @@ export function Dashboard({
           {section === "facturas-venta" && isAdmin &&
             (pathname.split("/")[2] ? (
               <InvoiceDetail
+                key={pathname}
                 sale={s.sales.find((x) => x.id === pathname.split("/")[2])}
                 job={s.jobs.find((j) => j.id === s.sales.find((x) => x.id === pathname.split("/")[2])?.jobId)}
+                documents={s.documents}
+                refresh={load}
                 onPayment={payment}
               />
             ) : (
@@ -2414,7 +2365,7 @@ export function Dashboard({
           {section === "nueva-factura" && isAdmin && (
             <InvoicePage
               key={pathname}
-              jobs={s.jobs}
+              jobs={activeJobs}
               customers={s.customers}
               jobId={pathname.split("/")[2]}
               sales={s.sales}
@@ -2442,6 +2393,7 @@ export function Dashboard({
                 </div>
               </div>
               <SystemHealth />
+              <VoiceUsage />
               <Panel
                 title={s.company.name}
                 subtitle={s.company.taxId || "Completa los datos de tu empresa"}
@@ -2758,10 +2710,10 @@ export function Dashboard({
       <Dialog open={add} onOpenChange={setAdd} title="¿Qué quieres hacer?">
         {(isAdmin
           ? [
+              { title: "Asistente", items: [{ key: "voice", label: "Dictar una orden", icon: Mic }] },
               { title: "Documentos", items: [
                 { key: "delivery", label: "Subir albarán", icon: Truck, main: true },
                 { key: "purchase", label: "Subir factura de proveedor", icon: Files, main: true },
-                { key: "credit", label: "Subir abono de proveedor", icon: FileMinus2 },
                 { key: "bulk", label: "Subir varios o una carpeta", icon: FolderUp },
               ] },
               { title: "Trabajo", items: [
@@ -2782,6 +2734,7 @@ export function Dashboard({
               ] },
             ]
           : [
+              { title: "Asistente", items: [{ key: "voice", label: "Dictar una orden", icon: Mic }] },
               { title: "Documentos", items: [{ key: "delivery", label: "Subir albarán", icon: Truck, main: true }] },
               { title: "Trabajo", items: [
                 { key: "cost", label: "Material usado", icon: Package },
@@ -2826,7 +2779,7 @@ export function Dashboard({
       </Dialog>
       {quoteBuilder && (
         <QuoteBuilder
-          jobs={s.jobs}
+          jobs={activeJobs}
           jobId={selected?.id}
           workers={s.workers}
           close={() => setQuoteBuilder(false)}
@@ -2839,7 +2792,7 @@ export function Dashboard({
       )}
       {material && (
         <MaterialPicker
-          jobs={s.jobs}
+          jobs={activeJobs}
           jobId={selected?.id}
           close={() => setMaterial(false)}
           onManual={() => {
@@ -2853,6 +2806,7 @@ export function Dashboard({
           }}
         />
       )}
+      {voice && <VoiceDialog close={() => setVoice(false)} confirm={(a, p) => run(a, p)} />}
       {expense && (
         <ExpenseForm
           close={() => setExpense(false)}
@@ -2877,7 +2831,7 @@ export function Dashboard({
       {upload && (
         <UploadForm
           kind={upload}
-          jobs={s.jobs}
+          jobs={activeJobs}
           jobId={selected?.id}
           isAdmin={isAdmin}
           close={() => setUpload(null)}
@@ -3324,7 +3278,7 @@ function UploadForm({
               }}
             >
               {(isAdmin
-                ? ["PURCHASE", "CREDIT", "DELIVERY", "PHOTO"]
+                ? ["PURCHASE", "DELIVERY", "PHOTO"]
                 : ["DELIVERY", "PHOTO"]
               ).map((k) => (
                 <option key={k} value={k}>

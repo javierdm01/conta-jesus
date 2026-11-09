@@ -157,6 +157,7 @@ model Job {
   openedAt       DateTime           @default(now())
   plannedAt      DateTime?
   finishedAt     DateTime?
+  archivedAt     DateTime?
   workerId       String?
   worker         Worker?            @relation(fields: [workerId], references: [id])
   costs          Cost[]
@@ -211,6 +212,7 @@ model Document {
   stockLots    StockLot[]     @relation("StockReceipt")
   valuedLots   StockLot[]     @relation("StockInvoice")
   overheads    Overhead[]
+  saleAttachments SaleAttachment[]
 
   @@unique([companyId, hash])
   @@unique([companyId, kind, supplierId, number])
@@ -435,9 +437,21 @@ model Sale {
   documentId  String?   @unique
   requestKey  String    @unique
   notes       String    @default("")
+  internalNotes String  @default("")
   lines       SaleLine[]
+  attachments SaleAttachment[]
 
   @@unique([companyId, number])
+}
+
+model SaleAttachment {
+  saleId String
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  documentId String
+  document Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  @@id([saleId, documentId])
+  @@index([documentId])
 }
 
 model SaleLine {
@@ -598,4 +612,24 @@ model InvoiceTemplate {
   createdAt DateTime @default(now())
 
   @@index([companyId])
+}
+
+// Trazabilidad del asistente de voz: una fila por transcripción (STT), orden por reglas (RULES) o llamada a OpenAI (OPENAI).
+model VoiceLog {
+  id               String   @id @default(cuid())
+  companyId        String
+  userId           String
+  kind             String
+  transcript       String   @default("")
+  result           String   @default("")
+  model            String   @default("")
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  costUsd          Decimal  @default(0) @db.Decimal(12, 6)
+  ms               Int      @default(0)
+  ok               Boolean  @default(true)
+  error            String   @default("")
+  createdAt        DateTime @default(now())
+
+  @@index([companyId, createdAt])
 }

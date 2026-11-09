@@ -1,5 +1,19 @@
 # Plan de continuidad del ERP · revisión del 25 de octubre de 2026
 
+## Retirada de trabajos · 09/11/2026
+
+El responsable puede eliminar un trabajo de la lista y recuperarlo desde el filtro Retirados. Se conserva el trabajo y sus facturas, presupuestos, horas, costes, documentos, movimientos y reservas; las cifras históricas siguen incluyéndolo. Los trabajos retirados no se ofrecen en los selectores normales de nuevas operaciones ni en el listado del técnico. La operación no elimina registros de forma permanente.
+
+## Analíticas de inicio · 08/11/2026
+
+El responsable puede consultar los últimos 7 días, 30 días, 12 meses o 5 años con facturación, costes, resultado orientativo, evolución e IVA estimado de los cuatro trimestres del año actual. Se muestran por separado ingresos identificados y costes de horas y material, junto con facturación sin clasificar. Las líneas de almacén y las líneas manuales con unidad de hora son las únicas clasificadas automáticamente; sin datos suficientes o cuando ventas y costes ocurren en periodos distintos, el beneficio parcial no equivale al beneficio real por trabajo. La estimación de IVA no incluye compensaciones anteriores ni determina deducibilidad. Pendiente: clasificación explícita revisable de líneas de venta y conciliación de ingresos y costes por trabajo para una rentabilidad fiable por categoría.
+
+## Etiquetas y almacén · 08/11/2026
+
+La impresión abre el diálogo del dispositivo tras elegir copias; la configuración y la vista previa quedan opcionales. El tamaño inicial es 48 × 40 mm y las preferencias nuevas se conservan por navegador. La comunicación directa Bluetooth con la MTP-II no está implementada: depende del dispositivo, el controlador o servicio de impresión y la disponibilidad de APIs y HTTPS. Probar físicamente el papel, escala, avance y lectura del código antes de imprimir una tanda.
+
+Los lotes se pueden editar, retirar y recuperar desde Archivados. La retirada no elimina existencias ni historial y actúa sobre un lote concreto. Las tarjetas del almacén muestran los datos principales de forma compacta.
+
 ## Facturación y presupuestos sencillos · 07/11/2026
 
 Clientes dispone ahora de un apartado propio accesible desde el menú y desde el móvil, con alta, edición y búsqueda. Los clientes guardados se pueden seleccionar al crear trabajos. La selección o creación directamente en el nuevo formulario de factura y presupuesto sigue pendiente de ese nuevo flujo.

@@ -1,12 +1,13 @@
 "use client";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import type { Job, Sale } from "@/lib/workspace-types";
+import type { Doc, Job, Sale } from "@/lib/workspace-types";
+import InvoiceAttachments from "./invoice-attachments";
 import { saleDue, saleStatus, saleTotal } from "@/lib/sales-view";
 import { InvoiceActions, StatusPill, eur, fmt, todayIso } from "./invoice-list";
 
 // Dentro de una factura: todas las acciones arriba, datos, líneas y totales.
-export default function InvoiceDetail({ sale, job, onPayment }: { sale?: Sale; job?: Job; onPayment: (s: Sale) => void }) {
+export default function InvoiceDetail({ sale, job, onPayment, documents, refresh }: { sale?: Sale; job?: Job; onPayment: (s: Sale) => void; documents: Doc[]; refresh: () => Promise<void> }) {
   if (!sale)
     return (
       <div className="empty">
@@ -86,6 +87,7 @@ export default function InvoiceDetail({ sale, job, onPayment }: { sale?: Sale; j
           </dl>
         </div>
       </section>
+      <InvoiceAttachments key={sale.id} sale={sale} documents={documents} refresh={refresh} />
     </>
   );
 }

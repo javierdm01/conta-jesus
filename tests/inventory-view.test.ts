@@ -48,6 +48,12 @@ const filters = {
   supplier: "",
   order: "newest",
 };
+test("los archivados se apartan de las búsquedas y se pueden consultar aparte", () => {
+  const archived = { ...lot, id: "archived", archivedAt: "2026-11-08T10:00:00.000Z" };
+  assert.deepEqual(filterInventory([lot, archived], filters).map((x) => x.id), [lot.id]);
+  assert.deepEqual(filterInventory([lot, archived], { ...filters, status: "archived" }).map((x) => x.id), [archived.id]);
+  assert.equal(lowStock(archived), false);
+});
 test("mínimos usan material libre: reservas pueden exigir reposición aunque haya existencias", () => {
   assert.equal(lowStock(lot), true);
   assert.equal(lowStock({ ...lot, minimum: "0" }), false);

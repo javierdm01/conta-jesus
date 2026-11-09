@@ -193,7 +193,7 @@ export default function InventoryWorkspace({
     : undefined;
   const choose = (l: InventoryLot, kind: string) => setMove({ lot: l, kind });
   const setArchived = async (l: InventoryLot, archived: boolean) => {
-    if (archived && !window.confirm("¿Retirar este artículo de la lista? Se conservan sus existencias, documentos e historial. Puedes recuperarlo desde Archivados.")) return;
+    if (archived && !window.confirm("¿Retirar este lote de la lista? Se conservan sus existencias, documentos e historial. Otros lotes del mismo artículo seguirán visibles. Puedes recuperarlo desde Archivados.")) return;
     try {
       await save(archived ? "stock-archive" : "stock-restore", { lotId: l.id });
       setSelected((current) => ({ ...current, [l.code]: false }));
@@ -376,11 +376,11 @@ export default function InventoryWorkspace({
               <div className="product-pricing">
                 <div>
                   <strong>
-                    Venta recomendada: {euro(lot.recommendedPrice)}
+                    Compra: {euro(lot.purchasePrice)} · Venta: {euro(lot.recommendedPrice)}
                     {lot.recommendedPrice != null ? ` / ${lot.unit}` : ""}
                   </strong>
                   <p>
-                    Coste unitario + 30 %, sin IVA.{" "}
+                    Venta = precio de compra + 30 %, sin IVA.{" "}
                     {lot.recommendedPrice == null
                       ? "Se calculará al conocer el coste."
                       : "Puedes ajustar el precio al facturar."}
@@ -690,8 +690,8 @@ export default function InventoryWorkspace({
                 value={search}
                 onChange={(e) => {
                   setSearch(e.target.value);
-                  if (!search.trim() && e.target.value.trim()) setFilter("all");
-                  if (lotIdentifier(e.target.value)) setFilter("all");
+                  if (filter !== "archived" && !search.trim() && e.target.value.trim()) setFilter("all");
+                  if (filter !== "archived" && lotIdentifier(e.target.value)) setFilter("all");
                 }}
                 onKeyDown={(e) => {
                   const code = lotIdentifier(search);
@@ -870,7 +870,8 @@ export default function InventoryWorkspace({
                       <small>de {n(all.received)} · {n(all.reserved)} reserv.</small>
                     </div>
                     {data.isAdmin && l.recommendedPrice != null && (
-                      <div className="sc-price" title="Coste + 30 % · sin IVA">
+                      <div className="sc-price" title="Compra y venta (compra + 30 %) · sin IVA">
+                        <small>Compra {euro(l.purchasePrice)}</small>
                         <strong>{euro(l.recommendedPrice)}</strong>
                         <small>venta / {l.unit}</small>
                       </div>
@@ -897,17 +898,6 @@ export default function InventoryWorkspace({
                       )}
                     </div>
                   </div>
-                  {rest.length > 0 && (
-                    <details className="sc-lots">
-                      <summary>{rest.length + 1} entradas · precio de la última</summary>
-                      {[l, ...rest].map((o) => (
-                        <Link prefetch key={o.id} href={lotHref(o.code)}>
-                          {o.document?.number ?? o.code} · {new Date(o.createdAt).toLocaleDateString("es-ES")} · {n(o.onHand)}/{n(o.received)} {o.unit}
-                          {o.recommendedPrice != null && ` · venta ${euro(o.recommendedPrice)}`}
-                        </Link>
-                      ))}
-                    </details>
-                  )}
                   {lowStock(l) && <div className="stock-low">Material libre en el mínimo</div>}
                 </article>
               ))}
@@ -947,15 +937,6 @@ export default function InventoryWorkspace({
               </Button>
             </section>
           )}
-          <div className="inventory-guide">
-            <Tag size={22} />
-            <p>
-              <strong>Una ficha para las 20 unidades.</strong> Las etiquetas de
-              un lote comparten código. Registra cada salida para saber cuánto
-              queda y a qué trabajo se ha destinado. Las nuevas compras generan
-              otro lote para conservar su fecha y coste.
-            </p>
-          </div>
         </>
       )}
       <Dialog
@@ -1343,6 +1324,7 @@ function PrintSelection({
         existencias.
       </p>
       <form action="/etiquetas" target="_blank">
+        <input type="hidden" name="print" value="1" />
         <input
           type="hidden"
           name="items"
@@ -1390,8 +1372,7 @@ function PrintSelection({
           ))}
         </div>
         <p className="small-note mt-4">
-          La siguiente pantalla permite ajustar el tamaño del rollo y elegir QR
-          o código de barras.
+          Se abrirá la impresión con el tamaño guardado para esta impresora.
         </p>
         {total > 500 && (
           <p className="error">Prepara un máximo de 500 etiquetas por tanda.</p>
@@ -1402,7 +1383,7 @@ function PrintSelection({
           </Button>
           <Button disabled={total < 1 || total > 500}>
             <Printer size={16} />
-            Vista previa · {total} etiquetas
+            Imprimir · {total} etiquetas
           </Button>
         </div>
       </form>

@@ -29,7 +29,7 @@ type Label = {
   qr: string;
   barcode: string;
 };
-export default function LabelPreview({ labels }: { labels: Label[] }) {
+export default function LabelPreview({ labels, autoPrint = false }: { labels: Label[]; autoPrint?: boolean }) {
   const [profiles, setProfiles] = useState<PrinterProfile[]>([]),
     [profileName, setProfileName] = useState(""),
     [profileId, setProfileId] = useState(""),
@@ -38,7 +38,7 @@ export default function LabelPreview({ labels }: { labels: Label[] }) {
     Object.fromEntries(labels.map((l) => [l.code, l.count])),
   );
   const [settings, setSettings] = useState({
-      width: 62,
+      width: 48,
       height: 40,
       format: "roll",
       code: "qr",
@@ -46,11 +46,13 @@ export default function LabelPreview({ labels }: { labels: Label[] }) {
       gap: 0,
     }),
     [showLocation, setShowLocation] = useState(true),
-    [showSupplier, setShowSupplier] = useState(true);
+    [showSupplier, setShowSupplier] = useState(true),
+    [ready, setReady] = useState(false),
+    [showPreview, setShowPreview] = useState(false);
   useEffect(() => {
     try {
       const stored = JSON.parse(
-        localStorage.getItem("instala-label-printer-v1") ?? "null",
+        localStorage.getItem("instala-label-printer-v2") ?? "null",
       );
       const valid = printerSettings(stored);
       if (valid) setSettings(valid);
@@ -62,9 +64,20 @@ export default function LabelPreview({ labels }: { labels: Label[] }) {
         ),
       );
     } catch {}
+    setReady(true);
   }, []);
+  useEffect(() => {
+    if (!ready || !autoPrint) return;
+    const timer = window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("print");
+      window.history.replaceState(window.history.state, "", url);
+      window.print();
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [ready, autoPrint]);
   const total = labels.reduce((a, l) => a + (counts[l.code] ?? 0), 0),
-    width = Math.min(105, Math.max(25, Number(settings.width) || 62)),
+    width = Math.min(105, Math.max(25, Number(settings.width) || 48)),
     height = Math.min(150, Math.max(20, Number(settings.height) || 40)),
     margin = Math.max(0, Math.min(20, Number(settings.margin) || 0)),
     gap = Math.max(0, Math.min(10, Number(settings.gap) || 0)),
@@ -88,12 +101,19 @@ export default function LabelPreview({ labels }: { labels: Label[] }) {
           <ArrowLeft size={16} />
           Volver al almacén
         </a>
-        <div className="eyebrow">PREPARADO PARA TU IMPRESORA</div>
-        <h1 className="mt-3 mb-2">Tus etiquetas.</h1>
+        <h1 className="mt-3 mb-2">Imprimir etiquetas</h1>
         <p className="small-note mb-6">
           {total} etiquetas · {labels.length} lotes. Cada copia conserva el
           identificador del artículo.
         </p>
+        <Button className="w-full" disabled={total < 1 || total > 500 || Object.values(counts).some((c) => !Number.isInteger(c) || c < 1)} onClick={() => {
+          try { localStorage.setItem("instala-label-printer-v2", JSON.stringify(settings)); } catch {}
+          window.print();
+        }}><Printer size={17} /> Imprimir {total} etiquetas</Button>
+        <p className="small-note mt-3">MTP-II: ancho imprimible de 48 mm por defecto. Selecciona la impresora en el diálogo del dispositivo.</p>
+        <button type="button" className="text-button mt-4 mb-4" onClick={() => setShowPreview(!showPreview)}>{showPreview ? "Ocultar vista previa" : "Ver vista previa"}</button>
+        <details className="printer-settings">
+          <summary>Configuración de impresora</summary>
         <div className="label-copy-counts">
           <strong>Copias por artículo</strong>
           {labels.map((l) => (
@@ -147,7 +167,7 @@ export default function LabelPreview({ labels }: { labels: Label[] }) {
               type="text"
               maxLength={60}
               value={profileName}
-              placeholder="Rollo almacén 62 × 40"
+              placeholder="MTP-II · 48 × 40"
               onChange={(e) => setProfileName(e.target.value)}
             />
           </label>
@@ -343,32 +363,13 @@ export default function LabelPreview({ labels }: { labels: Label[] }) {
             antes de lanzar la tanda.
           </p>
         </div>
-        <Button
-          className="w-full"
-          disabled={
-            total < 1 ||
-            total > 500 ||
-            Object.values(counts).some((c) => !Number.isInteger(c) || c < 1)
-          }
-          onClick={() => {
-            try {
-              localStorage.setItem(
-                "instala-label-printer-v1",
-                JSON.stringify(settings),
-              );
-            } catch {}
-            window.print();
-          }}
-        >
-          <Printer size={17} />
-          Imprimir {total} etiquetas
-        </Button>
         <p className="small-note mt-4">
           Se recordará el tamaño en este navegador. La impresión usa el
           controlador de tu impresora; no descuenta existencias.
         </p>
+        </details>
       </aside>
-      <section className="label-preview-area">
+      <section className={`label-preview-area${showPreview ? "" : " preview-hidden"}`}>
         <header className="label-preview-heading no-print">
           <div>
             <Tag size={20} />

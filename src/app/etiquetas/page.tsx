@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function LabelsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ items?: string }>;
+  searchParams: Promise<{ items?: string; print?: string }>;
 }) {
   let u;
   try {
@@ -18,7 +18,8 @@ export default async function LabelsPage({
     if (e instanceof AppError && e.status === 401) redirect("/login");
     throw e;
   }
-  const raw = (await searchParams).items ?? "";
+  const params = await searchParams;
+  const raw = params.items ?? "";
   const schema = z
     .array(
       z.object({
@@ -107,5 +108,5 @@ export default async function LabelsPage({
       };
     }),
   );
-  return <LabelPreview labels={labels} />;
+  return <LabelPreview labels={labels} autoPrint={params.print === "1"} />;
 }

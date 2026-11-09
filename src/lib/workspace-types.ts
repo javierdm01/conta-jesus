@@ -60,6 +60,7 @@ export type Sale = {
   dueAt?: string;
   jobName?: string;
   notes?: string;
+  internalNotes?: string;
   customerId?: string;
   customerName?: string;
   customerEmail?: string;
@@ -87,6 +88,8 @@ export type Job = {
   address: string;
   service: string;
   status: string;
+  archivedAt?: string | null;
+  finishedAt?: string | null;
   plannedAt?: string;
   hours: Hours[];
   costs: Cost[];

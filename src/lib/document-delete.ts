@@ -17,6 +17,7 @@ export type DeleteFacts = {
   stockLots: number;
   valuedLots: number;
   replacedBy: boolean;
+  saleAttachments?: number;
 };
 
 // Motivo por el que un documento no puede eliminarse, o null si puede.
@@ -30,16 +31,17 @@ export function deleteBlocker(f: DeleteFacts, now = new Date()): string | null {
     f.costs && `${f.costs} coste(s)`,
     (f.stockLots || f.valuedLots) && `${f.stockLots + f.valuedLots} lote(s) de material`,
     f.replacedBy && "otro documento que lo sustituye",
+    f.saleAttachments && `${f.saleAttachments} factura(s) con este documento adjunto`,
   ].filter(Boolean);
   return used.length ? `Tiene datos asociados: ${used.join(", ")}.` : null;
 }
 
 const input = z.object({ ids: z.array(v.id).min(1).max(50) });
-const counts = { select: { lines: true, costs: true, stockLots: true, valuedLots: true } } as const;
+const counts = { select: { lines: true, costs: true, stockLots: true, valuedLots: true, saleAttachments: true } } as const;
 const factsOf = (d: {
   status: string; kind: string; confirmedAt: Date | null; lockedUntil: Date | null;
   replacedBy: { id: string } | null;
-  _count: { lines: number; costs: number; stockLots: number; valuedLots: number };
+  _count: { lines: number; costs: number; stockLots: number; valuedLots: number; saleAttachments: number };
 }): DeleteFacts => ({ ...d, ...d._count, replacedBy: !!d.replacedBy });
 
 async function removeFile(relative: string) {
