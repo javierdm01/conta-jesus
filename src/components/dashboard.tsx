@@ -1,4 +1,5 @@
 "use client";
+import { authClient } from "@/lib/auth-client";
 import { uuid } from "@/lib/uuid";
 import { jobPath } from "@/lib/job-path";
 import { Fragment, useState, useEffect, useCallback, useRef } from "react";
@@ -40,6 +41,7 @@ import {
   CalendarDays,
   Receipt,
   Mic,
+  Fingerprint,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import useSWR from "swr";
@@ -2758,6 +2760,16 @@ export function Dashboard({
             </Link>
           ))}
           <button
+            onClick={async () => {
+              const r = await authClient.passkey.addPasskey({ name: navigator.platform || "Este dispositivo" }).catch(() => null);
+              setToast(r && !r.error ? "Listo: ya puedes entrar con huella o Face ID en este dispositivo." : "No se ha podido activar. Hace falta una conexión segura (https) y un nombre de dominio.");
+              setMenu(false);
+            }}
+          >
+            <Fingerprint size={20} />
+            Activar huella o Face ID
+          </button>
+          <button
             className="menu-logout"
             onClick={async () => {
               await request("/api/auth/sign-out", {});
@@ -2787,10 +2799,10 @@ export function Dashboard({
           jobs={activeJobs}
           jobId={selected?.id}
           close={() => setMaterial(false)}
-          onManual={() => {
+          onManual={isAdmin ? () => {
             setMaterial(false);
             createCost();
-          }}
+          } : undefined}
           saved={async () => {
             setMaterial(false);
             setToast("Material añadido al trabajo.");

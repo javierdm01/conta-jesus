@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
+import { passkey } from "@better-auth/passkey";
 import { db } from "./db";
 import { appOrigins } from "./app-origins";
 export const auth = betterAuth({
@@ -35,5 +36,5 @@ export const auth = betterAuth({
       },
     },
   },
-  plugins: [nextCookies()],
+  plugins: [nextCookies(), passkey({ rpName: "instala" })],
 });

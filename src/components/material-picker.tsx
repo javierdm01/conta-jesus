@@ -26,7 +26,7 @@ export function MaterialPicker({
   jobId?: string;
   close: () => void;
   saved: () => Promise<void>;
-  onManual: () => void;
+  onManual?: () => void;
 }) {
   const [query, setQuery] = useState(""),
     [term, setTerm] = useState(""),
@@ -101,7 +101,7 @@ export function MaterialPicker({
               {waiting ? <Spinner /> : <Search size={16} />}
               <input autoFocus type="search" placeholder="Buscar por nombre, alias o referencia" value={query} onChange={(e) => setQuery(e.target.value)} />
             </label>
-            <Button type="button" variant="outline" onClick={onManual}><PenLine size={16} />A mano</Button>
+            {onManual && <Button type="button" variant="outline" onClick={onManual}><PenLine size={16} />A mano</Button>}
           </div>
           {searchError && <p className="error" role="alert">{searchError.message}</p>}
           <div className="person-list">

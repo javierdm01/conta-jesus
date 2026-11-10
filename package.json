@@ -21,6 +21,8 @@
     "test:inventory": "node --env-file-if-exists=.env --import tsx tests/inventory-integration.ts"
   },
   "dependencies": {
+    "@better-auth/core": "^1.7.10",
+    "@better-auth/passkey": "^1.7.10",
     "@prisma/client": "6.19.3",
     "@radix-ui/react-dialog": "1.1.15",
     "@radix-ui/react-slot": "1.2.4",

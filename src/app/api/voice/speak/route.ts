@@ -1,3 +1,4 @@
+import { limit } from "@/lib/rate-limit";
 import { currentUser, checkOrigin } from "@/lib/access";
 import { apiError } from "@/lib/api-error";
 
@@ -6,7 +7,8 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   try {
     checkOrigin(req);
-    await currentUser();
+    const u = await currentUser();
+    limit(`tts:${u.id}`, 120);
     const url = process.env.TTS_URL;
     const body = await req.json();
     const text = String(body.text ?? "").slice(0, 600);

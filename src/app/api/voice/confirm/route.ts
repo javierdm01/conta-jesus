@@ -1,3 +1,4 @@
+import { limit } from "@/lib/rate-limit";
 import { currentUser, checkOrigin } from "@/lib/access";
 import { operate } from "@/lib/operations";
 import { recordVoice } from "@/lib/voice";
@@ -10,6 +11,7 @@ export async function POST(req: Request) {
   try {
     checkOrigin(req);
     const u = await currentUser();
+    limit(`confirm:${u.id}`, 30);
     const body = await req.json();
     const action = String(body.action ?? "");
     const summary = String(body.summary ?? "").slice(0, 300);

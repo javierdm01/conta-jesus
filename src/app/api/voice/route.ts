@@ -1,3 +1,4 @@
+import { limit } from "@/lib/rate-limit";
 import { currentUser, checkOrigin } from "@/lib/access";
 import { interpret, transcribe } from "@/lib/voice";
 import { db } from "@/lib/db";
@@ -9,6 +10,7 @@ export async function POST(req: Request) {
   try {
     checkOrigin(req);
     const u = await currentUser();
+    limit(`voice:${u.id}`, 30);
     let text = "";
     if (req.headers.get("content-type")?.includes("multipart/form-data")) {
       const f = (await req.formData()).get("audio");

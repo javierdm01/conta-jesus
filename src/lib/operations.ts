@@ -286,8 +286,8 @@ export async function operate(u: Actor, action: string, input: unknown) {
       })
       .parse(input);
     await accessibleJob(u, d.jobId);
-    if (u.role !== "ADMIN" && d.type !== "Materiales")
-      throw new AppError("Solo puedes añadir materiales.", 403);
+    // El técnico saca material del almacén (stock-move); los importes los pone el responsable.
+    admin(u);
     return serial(async (tx) => {
       const row = await tx.cost.create({ data: { ...d, companyId } });
       await audit(tx, u, "Registrar coste", row.id);

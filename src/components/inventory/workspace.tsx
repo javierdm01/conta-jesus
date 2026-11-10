@@ -35,6 +35,7 @@ import { Dialog } from "../ui/dialog";
 import type { InventoryData, InventoryLot } from "@/lib/inventory-types";
 import type { Job } from "@/lib/workspace-types";
 import { dec, sum } from "@/lib/money";
+import { printLabels } from "@/lib/serial-print";
 import { lotIdentifier } from "@/lib/inventory-math";
 import { filterInventory, inventoryCsv, lowStock } from "@/lib/inventory-view";
 import type { SaleProduct } from "../sale-products";
@@ -202,6 +203,13 @@ export default function InventoryWorkspace({
       setNotice(archived ? "Artículo retirado de la lista. Puedes recuperarlo en Archivados." : "Artículo recuperado.");
     } catch (e) { setNotice((e as Error).message); }
   };
+  const printNow = async (lots: InventoryLot[]) => {
+    setNotice("Imprimiendo…");
+    try {
+      await printLabels(lots.map((l) => ({ lot: l, copies: 1 })));
+      setNotice("Etiqueta enviada a la impresora.");
+    } catch (e) { setNotice((e as Error).message); }
+  };
   const actions = (l: InventoryLot) => (
     <div className="actions">
       <Button onClick={() => choose(l, "USE")} disabled={!dec(l.onHand).gt(0)}>
@@ -227,9 +235,9 @@ export default function InventoryWorkspace({
           Recuento físico
         </Button>
       )}
-      <Button variant="outline" onClick={() => setPrintLots([l])}>
+      <Button variant="outline" onClick={() => void printNow([l])}>
         <Printer size={16} />
-        Etiquetas
+        Imprimir etiqueta
       </Button>
       {l.movements.some(
         (m) => m.kind === "USE" && dec(m.returnable).gt(0) && m.job,
@@ -888,7 +896,7 @@ export default function InventoryWorkspace({
                         </button>
                       ) : (
                         <>
-                          <button type="button" title="Preparar etiquetas de este lote" aria-label={`Etiquetas de ${l.alias || l.description}`} onClick={() => setPrintLots([l])}>
+                          <button type="button" title="Imprimir etiqueta" aria-label={`Etiquetas de ${l.alias || l.description}`} onClick={() => void printNow([l])}>
                             <Printer size={16} />
                           </button>
                           <button type="button" title="Registrar uso" aria-label={`Registrar uso de ${l.alias || l.description}`} disabled={!dec(all.onHand).gt(0)} onClick={() => choose(all, "USE")}>
@@ -1309,6 +1317,8 @@ function PrintSelection({
   const [counts, setCounts] = useState<Record<string, number>>(() =>
     Object.fromEntries(lots.map((l) => [l.code, 1])),
   );
+  const [busy, setBusy] = useState(false),
+    [err, setErr] = useState("");
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   return (
     <Dialog
@@ -1323,13 +1333,21 @@ function PrintSelection({
         preparar una para la caja o una para cada unidad. Imprimir no cambia las
         existencias.
       </p>
-      <form action="/etiquetas" target="_blank">
-        <input type="hidden" name="print" value="1" />
-        <input
-          type="hidden"
-          name="items"
-          value={lots.map((l) => `${l.code}:${counts[l.code]}`).join(",")}
-        />
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setErr("");
+          try {
+            await printLabels(lots.map((l) => ({ lot: l, copies: counts[l.code] })));
+            close();
+          } catch (x) {
+            setErr((x as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
         <div className="print-selection-list">
           {lots.map((l) => (
             <div className="print-selection-row" key={l.id}>
@@ -1372,8 +1390,9 @@ function PrintSelection({
           ))}
         </div>
         <p className="small-note mt-4">
-          Se abrirá la impresión con el tamaño guardado para esta impresora.
+          Se imprime directo en la impresora térmica conectada por serie.
         </p>
+        {err && <p className="error" role="alert">{err}</p>}
         {total > 500 && (
           <p className="error">Prepara un máximo de 500 etiquetas por tanda.</p>
         )}
@@ -1381,7 +1400,7 @@ function PrintSelection({
           <Button type="button" variant="outline" onClick={close}>
             Cancelar
           </Button>
-          <Button disabled={total < 1 || total > 500}>
+          <Button disabled={busy || total < 1 || total > 500}>
             <Printer size={16} />
             Imprimir · {total} etiquetas
           </Button>
