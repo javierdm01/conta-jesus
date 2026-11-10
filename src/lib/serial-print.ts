@@ -4,7 +4,7 @@ type Port = { open(o: { baudRate: number }): Promise<void>; close(): Promise<voi
 type SerialApi = { getPorts(): Promise<Port[]>; requestPort(): Promise<Port> };
 export type LabelLot = { code: string; description: string; alias?: string; reference?: string; location?: string; unit?: string; onHand?: string | number };
 
-const W = 384, H = 264; // 48 mm × 33 mm a 203 ppp (MTP-II / PT-210)
+const W = 384, H = 288; // 48 mm × 36 mm a 203 ppp (MTP-II / PT-210)
 const BAUD = 9600;
 
 // Impresión directa por Web Serial (Chrome/Edge, https o localhost). Se abre y se cierra en cada impresión para no dejar el puerto ocupado.
@@ -39,11 +39,12 @@ async function raster(lot: LabelLot) {
   c.width = W; c.height = H;
   const ctx = c.getContext("2d")!;
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-  const qr = document.createElement("canvas");
-  await QRCode.toCanvas(qr, `${location.origin}/inventario/${lot.code}`, { width: 150, margin: 0, errorCorrectionLevel: "M" });
-  ctx.drawImage(qr, 6, 8);
+  // QR mínimo: solo el código (versión 1, 21×21 módulos), corrección baja y módulos de 6 px exactos para que la térmica no los difumine.
+  const qr = QRCode.create(lot.code, { errorCorrectionLevel: "L" }).modules, cell = 6, quiet = 3;
+  ctx.fillStyle = "#000";
+  for (let r = 0; r < qr.size; r++) for (let q = 0; q < qr.size; q++) if (qr.get(r, q)) ctx.fillRect(6 + (q + quiet) * cell, 8 + (r + quiet) * cell, cell, cell);
   ctx.fillStyle = "#000"; ctx.textBaseline = "top";
-  const x = 170, width = W - x - 4;
+  const x = 176, width = W - x - 4;
   let y = 8;
   ctx.font = "bold 26px sans-serif";
   for (const l of wrap(ctx, lot.alias || lot.description, width, 4)) { ctx.fillText(l, x, y); y += 30; }
