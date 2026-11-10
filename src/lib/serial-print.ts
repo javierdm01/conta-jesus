@@ -1,22 +1,25 @@
 import QRCode from "qrcode";
 
-type Port = { open(o: { baudRate: number }): Promise<void>; writable: WritableStream<Uint8Array> | null };
+type Port = { open(o: { baudRate: number }): Promise<void>; close(): Promise<void>; writable: WritableStream<Uint8Array> | null };
 type SerialApi = { getPorts(): Promise<Port[]>; requestPort(): Promise<Port> };
 export type LabelLot = { code: string; description: string; alias?: string; reference?: string; location?: string; unit?: string; onHand?: string | number };
 
 const W = 384, H = 264; // 48 mm × 33 mm a 203 ppp (MTP-II / PT-210)
 const BAUD = 9600;
-let port: Port | null = null;
 
-// Impresión directa por Web Serial (Chrome/Edge, https o localhost). Sin diálogos: la primera vez pide elegir el puerto emparejado y lo recuerda.
-async function connect() {
+// Impresión directa por Web Serial (Chrome/Edge, https o localhost). Se abre y se cierra en cada impresión para no dejar el puerto ocupado.
+async function open(): Promise<Port> {
   const serial = (navigator as unknown as { serial?: SerialApi }).serial;
   if (!serial) throw new Error("Este navegador no permite imprimir por serie. Usa Chrome o Edge con https.");
-  if (!port) {
-    port = (await serial.getPorts())[0] ?? (await serial.requestPort());
-    await port.open({ baudRate: BAUD }).catch((e) => { if ((e as Error).name !== "InvalidStateError") { port = null; throw e; } });
+  const try1 = async (p: Port) => { await p.open({ baudRate: BAUD }); return p; };
+  for (const p of await serial.getPorts()) { try { return await try1(p); } catch {} }
+  // Ningún puerto recordado abre (apagada, ocupada o puerto equivocado): se vuelve a pedir uno.
+  try {
+    return await try1(await serial.requestPort());
+  } catch (e) {
+    if ((e as Error).name === "NotFoundError") throw new Error("No has elegido ninguna impresora.");
+    throw new Error(`No se puede abrir el puerto (${(e as Error).name}: ${(e as Error).message}). Cierra otras pestañas o programas que usen la impresora, incluida la de localhost.`);
   }
-  return port;
 }
 
 function wrap(ctx: CanvasRenderingContext2D, text: string, width: number, max: number) {
@@ -64,7 +67,7 @@ async function raster(lot: LabelLot) {
 }
 
 export async function printLabels(items: { lot: LabelLot; copies: number }[]) {
-  const p = await connect();
+  const p = await open();
   const writer = p.writable!.getWriter();
   try {
     for (const { lot, copies } of items) {
@@ -78,5 +81,6 @@ export async function printLabels(items: { lot: LabelLot; copies: number }[]) {
     }
   } finally {
     writer.releaseLock();
+    await p.close().catch(() => {});
   }
 }
