@@ -1269,6 +1269,21 @@ export function Dashboard({
       {j.archivedAt && <div className="info-banner mb-5">Trabajo retirado. Sus datos e historial se conservan; recupéralo para volver a trabajar con él.{isAdmin && <> <button className="text-button" onClick={() => void setJobArchived(j, false)}>Recuperar trabajo</button></>}</div>}
       {!j.archivedAt && (() => {
         const finished = !!(j.finishedAt || j.status === "Finalizado");
+        // Terminado: solo facturar (verde) y reabrir. El técnico no puede reabrir ni facturar, así que no ve nada.
+        if (finished)
+          return (
+            <div className="jd-actions">
+              {isAdmin && <Button onClick={() => openInvoice()}>Facturar trabajo</Button>}
+              {isAdmin && <Button variant="outline" onClick={() => run("status", { jobId: j.id, status: "En proceso" })}>Reabrir trabajo</Button>}
+              <MoreMenu>
+                <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
+                <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
+                {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
+                {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
+                {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
+              </MoreMenu>
+            </div>
+          );
         return (
           <div className="jd-actions">
             <Button onClick={createHours}>Registrar horas</Button>

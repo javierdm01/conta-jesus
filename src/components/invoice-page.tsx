@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Boxes, ChevronRight, Clock, FileStack, Plus, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,15 @@ const net = (l: InvLine) => {
   } catch {
     return "0.00";
   }
+};
+const HOURS_DESC = "Mano de obra";
+/** Una línea con las horas facturables del trabajo. shortcut: precio sugerido = coste medio/hora + 30 % (como el material), editable; sin horas facturadas antes no hay forma de saber cuáles ya se cobraron. */
+const hoursLine = (j?: Job): InvLine | null => {
+  const h = (j?.hours ?? []).filter((x) => x.billable !== false).reduce((a, x) => a.plus(x.hours), dec(0));
+  if (h.lte(0)) return null;
+  const m = j?.metrics;
+  const price = m && Number(m.hours) > 0 ? cents(dec(m.labor).div(m.hours).mul("1.30")) : "0.00";
+  return inv({ description: HOURS_DESC, unit: "h", quantity: h.toString(), price });
 };
 async function post(url: string, body?: unknown) {
   const res = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
@@ -100,6 +109,24 @@ export default function InvoicePage({
       setLoadingMat(false);
     }
   };
+  const addHours = () => {
+    const l = hoursLine(current);
+    if (!l) return setInfo("No hay horas facturables en el trabajo.");
+    setLines((cur) => {
+      const at = cur.findIndex((x) => x.description === HOURS_DESC);
+      if (at < 0) return [...cur, l];
+      const next = [...cur];
+      next[at] = { ...next[at], quantity: l.quantity };
+      return next;
+    });
+  };
+  // Al facturar desde un trabajo se cargan sus materiales y horas. Las horas solo si aún no hay facturas: no se registra cuáles se cobraron.
+  useEffect(() => {
+    if (!startJob) return;
+    void loadMaterials();
+    if (!startJob.sales.length) addHours();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const quoteLines = (id: string) => {
     const q = current?.quotes.find((x) => x.id === id);
     const factor = dec(1).minus(dec(q?.inputs?.margin || 0).div(100));
@@ -187,6 +214,9 @@ export default function InvoicePage({
         <div className="inv-tools">
           <Button type="button" size="sm" variant="outline" loading={loadingMat} disabled={!job} onClick={loadMaterials}>
             <Boxes size={15} /> Material del trabajo
+          </Button>
+          <Button type="button" size="sm" variant="outline" disabled={!job} onClick={addHours}>
+            <Clock size={15} /> Horas del trabajo
           </Button>
           <Button type="button" size="sm" variant="outline" disabled={!job} onClick={() => setPicker(true)}>Añadir del almacén</Button>
           {templates.length > 0 && (
