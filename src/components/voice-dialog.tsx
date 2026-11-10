@@ -12,6 +12,26 @@ type Line = { who: "tú" | "asistente"; text: string };
 const plain = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 const YES = /^(si|vale|ok|okey|confirma|confirmo|guardalo|guardala|adelante|correcto|dale|hazlo|claro|perfecto|de acuerdo)\b/;
 const NO = /^(no|cancela|cancelalo|olvidalo|deja|para)\b/;
+const VOICES = [
+  { id: "k-dora", label: "Natural · Dora (mujer)" },
+  { id: "k-alex", label: "Natural · Alex (hombre)" },
+  { id: "k-santa", label: "Natural · Santa (hombre)" },
+  { id: "davefx", label: "España · Davefx" },
+  { id: "sharvard-0", label: "España · Sharvard A" },
+  { id: "sharvard-1", label: "España · Sharvard B" },
+  { id: "claude", label: "México · Claude" },
+  { id: "ald", label: "México · Ald" },
+  { id: "browser", label: "Voz del navegador" },
+];
+type Prefs = { voice: string; speed: number };
+const loadPrefs = (): Prefs => {
+  try {
+    const p = JSON.parse(localStorage.getItem("instala-voice") ?? "null");
+    if (p && VOICES.some((v) => v.id === p.voice)) return { voice: p.voice, speed: Math.min(Math.max(Number(p.speed) || 1, 0.7), 1.5) };
+  } catch {}
+  return { voice: "k-dora", speed: 1 };
+};
+const FIXED = ["Hecho, guardado.", "Vale, lo dejo sin guardar."];
 const LABEL: Record<Phase, string> = { idle: "Toca para hablar", listening: "Te escucho… toca para enviar", thinking: "Pensando…", speaking: "Hablando…" };
 
 // Conversación por voz: escucha hasta que callas, responde en voz alta y pide confirmación antes de guardar.
@@ -20,45 +40,89 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
   const [log, setLog] = useState<Line[]>([]);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
+  const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+  const cache = useRef(new Map<string, Promise<Blob>>()); // audio ya generado: las frases repetidas suenan al instante
   const pending = useRef<Proposal | null>(null);
   const alive = useRef(true);
   const stream = useRef<MediaStream | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
   const stopRec = useRef<{ send: () => void; cancel: () => void } | null>(null);
 
-  const say = (t: string, then?: () => void) => {
-    setLog((l) => [...l, { who: "asistente", text: t }]);
-    const done = () => {
-      if (!alive.current) return;
-      setPhase("idle");
-      then?.();
-    };
-    setPhase("speaking");
+  const speech = (t: string) => {
+    const { voice, speed } = prefsRef.current;
+    const k = `${voice}|${speed}|${t}`;
+    let p = cache.current.get(k);
+    if (!p) {
+      p = fetch("/api/voice/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t, voice, speed }) }).then((r) => (r.ok ? r.blob() : Promise.reject()));
+      p.catch(() => cache.current.delete(k));
+      cache.current.set(k, p);
+    }
+    return p;
+  };
+  // Solo audio (sin añadir a la conversación): voz del servidor (Piper) o, si falla o se elige, la del navegador.
+  // onStart: se llama cuando empieza a sonar (para mostrar el texto a la vez que la voz).
+  const speak = (t: string, done: () => void, onStart?: () => void) => {
+    let started = false;
+    const start = () => (started || ((started = true), onStart?.()));
     const fallback = () => {
       if (!alive.current) return;
+      start();
       if (!("speechSynthesis" in window)) return done();
       const u = new SpeechSynthesisUtterance(t);
       u.lang = "es-ES";
+      u.rate = prefsRef.current.speed;
       u.onend = done;
       u.onerror = done;
       speechSynthesis.cancel();
       speechSynthesis.speak(u);
     };
-    // Voz natural del servidor interno (Piper); si falla, la del navegador.
-    fetch("/api/voice/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t }) })
-      .then((r) => (r.ok ? r.blob() : Promise.reject()))
-      .then((b) => {
-        if (!alive.current) return;
-        const a = new Audio(URL.createObjectURL(b));
-        audio.current = a;
-        a.onended = done;
-        a.onerror = fallback;
-        return a.play().catch(fallback);
-      })
-      .catch(fallback);
+    if (prefsRef.current.voice === "browser") return fallback();
+    // Por frases y en paralelo: la primera suena en cuanto está lista, sin esperar a generar el resto.
+    const jobs = (t.match(/[^.!?]+[.!?]*/g) ?? [t]).map((s) => s.trim()).filter(Boolean).map(speech);
+    const play = (i: number) => {
+      if (i >= jobs.length) return done();
+      jobs[i]
+        .then((b) => {
+          if (!alive.current) return;
+          const a = new Audio(URL.createObjectURL(b));
+          audio.current = a;
+          a.onended = () => play(i + 1);
+          a.onerror = fallback;
+          return a.play().then(start, fallback);
+        })
+        .catch(fallback);
+    };
+    play(0);
   };
+  const say = (t: string, then?: () => void) => {
+    setPhase("thinking");
+    speak(
+      t,
+      () => {
+        if (!alive.current) return;
+        setPhase("idle");
+        then?.();
+      },
+      () => (setLog((l) => [...l, { who: "asistente", text: t }]), setPhase("speaking")),
+    );
+  };
+  const choose = (p: Prefs) => {
+    setPrefs(p);
+    try {
+      localStorage.setItem("instala-voice", JSON.stringify(p));
+    } catch {}
+  };
+  useEffect(() => {
+    if (prefs.voice !== "browser") FIXED.forEach((t) => speech(t).catch(() => {}));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs]);
 
   const handle = async (said: string, keepListening: boolean) => {
+    // Un «sí»/«no» suelto sin nada pendiente (eco, o repetido) no es una orden: se ignora sin gastar una consulta.
+    const n0 = plain(said);
+    if (!pending.current && n0.length < 20 && (YES.test(n0) || NO.test(n0))) return keepListening && alive.current ? listen() : undefined;
     setLog((l) => [...l, { who: "tú", text: said }]);
     const next = () => keepListening && alive.current && listen();
     const p = pending.current;
@@ -118,7 +182,7 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
       const level = Math.max(...buf.map((x) => Math.abs(x - 128))) / 128;
       const now = Date.now();
       if (level > 0.08) (heard = true), (lastVoice = now);
-      if ((heard && now - lastVoice > 1300) || now - t0 > (heard ? 30000 : 8000)) rec.stop();
+      if ((heard && now - lastVoice > 1000) || now - t0 > (heard ? 30000 : 8000)) rec.stop();
     }, 100);
     const end = () => rec.state !== "inactive" && rec.stop();
     stopRec.current = { send: end, cancel: () => ((cancelled = true), end()) };
@@ -176,6 +240,26 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
           {phase === "idle" ? <MicOff size={34} /> : <Mic size={34} />}
         </button>
         <p className="text-center text-sm text-slate-500">{LABEL[phase]}</p>
+        <details className="rounded-xl border px-3 py-2 text-sm">
+          <summary className="cursor-pointer font-semibold">Voz y velocidad</summary>
+          <div className="mt-2 grid gap-2">
+            <label>
+              Voz
+              <select value={prefs.voice} onChange={(e) => choose({ ...prefs, voice: e.target.value })}>
+                {VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>{v.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Velocidad: {prefs.speed.toFixed(2)}×
+              <input type="range" min={0.7} max={1.5} step={0.05} value={prefs.speed} onChange={(e) => choose({ ...prefs, speed: Number(e.target.value) })} />
+            </label>
+            <Button variant="outline" disabled={phase !== "idle"} onClick={() => (setPhase("speaking"), speak("Hola, soy tu asistente. ¿Qué apunto hoy?", () => alive.current && setPhase("idle")))}>
+              Probar voz
+            </Button>
+          </div>
+        </details>
         {phase === "listening" && (
           <Button variant="outline" onClick={() => stopRec.current?.cancel()}>Cancelar grabación</Button>
         )}

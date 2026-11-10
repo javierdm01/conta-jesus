@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { AppError, type Actor } from "@/lib/access";
 import { matchesSearch } from "@/lib/product-search";
+import { dec } from "@/lib/money";
 
 import { parseCommand, type Intent } from "@/lib/voice-parse";
 
@@ -47,9 +48,51 @@ async function record(u: Actor, row: { kind: string; transcript?: string; result
 }
 
 /** Pide al modelo solo el JSON de la orden (~400 tokens). Sin clave, no se llama. */
-async function askModel(text: string): Promise<{ intent: Intent | null; trace: Trace } | null> {
+// Si OpenAI rechaza la clave, no se vuelve a intentar durante 10 minutos (cada intento fallido añadía latencia).
+let llmDownUntil = 0;
+const llmBroken = () => Date.now() < llmDownUntil;
+type Ctx = { customers: string[]; jobs: string[] };
+
+/** «Conocimiento» del asistente: qué acciones existen, qué variables lleva cada una y qué datos reales tiene la empresa. */
+function systemPrompt(c: Ctx) {
+  const d = new Date();
+  return [
+    `Eres el asistente de voz de una empresa de instalaciones eléctricas. Hoy es ${iso(d)} (${["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"][d.getDay()]}).`,
+    "Convierte la orden hablada en UN solo JSON, sin texto extra. Acciones y variables (? = opcional):",
+    '- hours: {"action":"hours","customer"?,"job"?,"start":"HH:MM","end":"HH:MM","date"?}  registrar horas trabajadas.',
+    '- material: {"action":"material","item":s,"quantity":n,"customer"?,"job"?}  material del almacén gastado en un trabajo (item sin artículo: "enchufe", no "los enchufes").',
+    '- expense: {"action":"expense","category"?:AUTONOMO|SEGURO|VEHICULO|COMBUSTIBLE|DIETAS|OTHER,"amount":n,"concept"?,"date"?}  gasto de la empresa.',
+    '- job: {"action":"job","customer":s,"name":s}  crear un trabajo nuevo para un cliente.',
+    '- contact: {"action":"contact","kind":"customer"|"supplier","name":s,"phone"?}  dar de alta un cliente o proveedor (nunca es "job").',
+    '- find: {"action":"find","kind"?:"customer"|"supplier","name":s}  buscar/consultar un cliente o proveedor que ya existe y decir sus datos.',
+    '- query: {"action":"query","entity":"jobs"|"unpaid"|"stock"|"hours","name"?:s}  preguntas de consulta: jobs = trabajos abiertos (name = cliente), unpaid = facturas pendientes de cobro (name = cliente), stock = existencias de un artículo (name), hours = horas acumuladas (name = cliente o trabajo).',
+    '- status: {"action":"status","customer"?,"job"?,"status":"Finalizado"|"En proceso"}  marcar un trabajo como finalizado o reabrirlo.',
+    '- payment: {"action":"payment","customer"?,"number"?,"amount":n}  registrar que un cliente ha pagado un importe de una factura (number = número de factura si lo dice).',
+    '- approve: {"action":"approve","customer"?,"job"?}  aprobar el presupuesto de un trabajo.',
+    '- none: {"action":"none"}  si no es ninguna de las anteriores.',
+    'Valores: job = "last" si dice «último trabajo» o no concreta ninguno; date = "yesterday" | "2daysago" | "weekday:0-6" (0=domingo) o se omite si es hoy; horas en 24 h («5 y media» tras «8 y media» = 17:30).',
+    "La transcripción puede tener errores de reconocimiento: corrige nombres usando las listas y devuelve el nombre EXACTO de la lista cuando haya coincidencia.",
+    c.customers.length ? `Clientes: ${c.customers.join(", ")}.` : "",
+    c.jobs.length ? `Trabajos abiertos (cliente · trabajo): ${c.jobs.join("; ")}.` : "",
+  ].filter(Boolean).join("\n");
+}
+
+/** La respuesta del modelo no es de fiar: solo se aceptan acciones conocidas con sus campos mínimos. */
+function validIntent(o: Record<string, unknown>) {
+  switch (o.action) {
+    case "hours": case "expense": case "job": case "contact": case "material": return true;
+    case "find": return typeof o.name === "string";
+    case "query": return ["jobs", "unpaid", "stock", "hours"].includes(String(o.entity));
+    case "status": return o.status === "Finalizado" || o.status === "En proceso";
+    case "payment": return Number(o.amount) > 0;
+    case "approve": return true;
+    default: return false;
+  }
+}
+
+async function askModel(text: string, ctx: Ctx): Promise<{ intent: Intent | null; trace: Trace } | null> {
   const key = process.env.OPENAI_API_KEY;
-  if (!key) return null;
+  if (!key || llmBroken()) return null;
   const model = process.env.OPENAI_VOICE_MODEL || "gpt-4o-mini";
   const t0 = Date.now();
   const trace: Trace = { model, promptTokens: 0, completionTokens: 0, ms: 0, ok: false, error: "" };
@@ -66,8 +109,7 @@ async function askModel(text: string): Promise<{ intent: Intent | null; trace: T
       messages: [
         {
           role: "system",
-          content:
-            'Devuelve solo JSON. Una de: {"action":"hours","customer":?,"job":? ("last" si dice último trabajo),"start":"HH:MM","end":"HH:MM","date":? ("yesterday"|"2daysago"|"weekday:0-6")} | {"action":"expense","category":?(AUTONOMO|SEGURO|VEHICULO|COMBUSTIBLE|DIETAS|OTHER),"amount":n,"concept":?,"date":?} | {"action":"job","customer":s,"name":s} | {"action":"material","item":s,"quantity":n,"customer":?,"job":? ("last" si dice último trabajo)} | {"action":"contact","kind":"customer"|"supplier","name":s,"phone":?} | {"action":"none"}. Horas en 24h (tarde = +12). Crear/dar de alta un cliente o proveedor es "contact", nunca "job".',
+          content: systemPrompt(ctx),
         },
         { role: "user", content: text.slice(0, 500) },
       ],
@@ -79,8 +121,9 @@ async function askModel(text: string): Promise<{ intent: Intent | null; trace: T
   trace.completionTokens = body.usage?.completion_tokens ?? 0;
   const o = JSON.parse(body.choices[0].message.content);
   trace.ok = true;
-  return { intent: o.action === "hours" || o.action === "expense" || o.action === "job" || o.action === "contact" || o.action === "material" ? o : null, trace: { ...trace, ms: Date.now() - t0 } };
+  return { intent: validIntent(o) ? o : null, trace: { ...trace, ms: Date.now() - t0 } };
   } catch (e) {
+    if (/^OpenAI (401|403)/.test((e as Error).message)) llmDownUntil = Date.now() + 600_000;
     return { intent: null, trace: { ...trace, ms: Date.now() - t0, error: (e as Error).message } };
   }
 }
@@ -103,19 +146,24 @@ export async function transcribe(u: Actor, audio: File, hint = "") {
 }
 
 export async function interpret(u: Actor, transcript: string): Promise<Reply> {
-  let intent = parseCommand(transcript);
+  const [custs, openJobs] = await Promise.all([
+    db.customer.findMany({ where: { companyId: u.companyId }, select: { name: true }, orderBy: { name: "asc" }, take: 300 }),
+    db.job.findMany({ where: { companyId: u.companyId, archivedAt: null }, select: { name: true, customer: { select: { name: true } } }, orderBy: { openedAt: "desc" }, take: 12 }),
+  ]);
+  const names = custs.map((c) => c.name);
+  let intent = parseCommand(transcript, names);
   if (intent) await record(u, { kind: "RULES", transcript, result: JSON.stringify(intent) });
   else {
-    const m = await askModel(transcript);
+    const m = await askModel(transcript, { customers: names.slice(0, 40), jobs: openJobs.map((j) => `${j.customer.name} · ${j.name}`) });
     if (m) {
       intent = m.intent;
       await record(u, { kind: "OPENAI", transcript, result: m.intent ? JSON.stringify(m.intent) : m.trace.ok ? "sin intención" : "", ...m.trace });
     }
   }
-  if (!intent) return { transcript, message: "No he entendido la orden. Prueba, por ejemplo: «créame al cliente Francisco», «apunta de 8 y media a 5 y media al cliente Juan, en el último trabajo», «añade dos enchufes al último trabajo» o «apunta un gasto de gasolina de 40 euros»." };
+  if (!intent) return { transcript, message: (llmBroken() ? "El asistente avanzado no está activo (la clave de OpenAI no es válida; avisa al responsable). " : "") + "No he entendido la orden. Prueba, por ejemplo: «créame al cliente Francisco»." };
   const companyId = u.companyId;
 
-  if (intent.action === "hours" || intent.action === "material") {
+  if (intent.action === "hours" || intent.action === "material" || intent.action === "status") {
     const mine = u.worker?.id;
     if (intent.action === "hours" && !mine && u.role !== "ADMIN") return { transcript, message: "Tu usuario no tiene un trabajador asociado para registrar horas." };
     const jobs = await db.job.findMany({
@@ -131,6 +179,13 @@ export async function interpret(u: Actor, transcript: string): Promise<Reply> {
       const hit = pool.find((j) => matchesSearch(intent.job!, [j.name, j.number]));
       if (!hit) return { transcript, message: `No encuentro el trabajo «${intent.job}».` };
       job = hit;
+    }
+    if (intent.action === "status") {
+      if (u.role !== "ADMIN" && intent.status !== "Finalizado") return { transcript, message: "El técnico solo puede marcar trabajos como finalizados." };
+      return {
+        transcript,
+        proposal: { text: transcript, action: "status", summary: `${intent.status === "Finalizado" ? "Marcar finalizado" : "Reabrir"}: ${job.customer.name} · ${job.number} ${job.name}`, payload: { jobId: job.id, status: intent.status } },
+      };
     }
     if (intent.action === "material") {
       const lots = await db.stockLot.findMany({ where: { companyId, archivedAt: null, onHand: { gt: 0 } }, select: { id: true, alias: true, description: true, reference: true, brand: true, model: true, code: true, onHand: true, unit: true } });
@@ -178,7 +233,70 @@ export async function interpret(u: Actor, transcript: string): Promise<Reply> {
     };
   }
 
-  if (u.role !== "ADMIN") return { transcript, message: "Solo el responsable puede crear clientes, proveedores o trabajos." };
+  if (u.role !== "ADMIN") return { transcript, message: "Solo el responsable puede consultar o crear clientes, proveedores o trabajos." };
+  if (intent.action === "query") {
+    const q = intent.name?.trim() ?? "";
+    const list = (xs: string[], none: string, more = 6) => (xs.length ? xs.slice(0, more).join("; ") + (xs.length > more ? `; y ${xs.length - more} más` : "") + "." : none);
+    if (intent.entity === "jobs") {
+      const rows = await db.job.findMany({ where: { companyId, archivedAt: null }, include: { customer: true }, orderBy: { openedAt: "desc" }, take: 200 });
+      const hit = rows.filter((j) => !q || matchesSearch(q, [j.customer.name, j.name]));
+      return { transcript, message: list(hit.map((j) => `${j.customer.name} · ${j.name} (${j.status})`), `No hay trabajos abiertos${q ? ` de «${q}»` : ""}.`) };
+    }
+    if (intent.entity === "unpaid") {
+      const rows = await db.sale.findMany({ where: { companyId }, include: { job: { include: { customer: true } } }, orderBy: { date: "desc" }, take: 500 });
+      const owed = rows.map((s) => ({ s, due: dec(s.net.toString()).plus(s.tax.toString()).minus(s.withholding.toString()).minus(s.collected.toString()) })).filter((x) => x.due.gt(0) && (!q || matchesSearch(q, [x.s.job.customer.name, x.s.number])));
+      const total = owed.reduce((a, x) => a.plus(x.due), dec(0));
+      return { transcript, message: owed.length ? `Pendiente de cobro ${total.toFixed(2)} €: ` + list(owed.map((x) => `${x.s.number} · ${x.s.job.customer.name} · ${x.due.toFixed(2)} €`), "") : `No hay facturas pendientes de cobro${q ? ` de «${q}»` : ""}.` };
+    }
+    if (intent.entity === "stock") {
+      if (!q) return { transcript, message: "¿De qué artículo quieres saber las existencias?" };
+      const lots = await db.stockLot.findMany({ where: { companyId, archivedAt: null }, select: { alias: true, description: true, reference: true, brand: true, model: true, code: true, onHand: true, unit: true } });
+      const hit = lots.filter((l) => matchesSearch(q, [l.alias, l.description, l.reference, l.brand, l.model, l.code]));
+      return { transcript, message: list(hit.map((l) => `${l.alias || l.description}: ${l.onHand} ${l.unit}`), `No tengo «${q}» en el almacén.`, 4) };
+    }
+    const entries = await db.timeEntry.findMany({ where: { companyId }, include: { job: { include: { customer: true } } }, orderBy: { date: "desc" }, take: 1000 });
+    const hit = entries.filter((e) => !q || matchesSearch(q, [e.job.customer.name, e.job.name]));
+    const total = hit.reduce((a, e) => a.plus(e.hours.toString()), dec(0));
+    return { transcript, message: hit.length ? `${total.toFixed(2)} horas en ${hit.length} registros${q ? ` de «${q}»` : ""}.` : `No hay horas registradas${q ? ` de «${q}»` : ""}.` };
+  }
+  if (intent.action === "payment") {
+    const amount = Number(intent.amount);
+    const rows = await db.sale.findMany({ where: { companyId }, include: { job: { include: { customer: true } } }, orderBy: { date: "desc" }, take: 500 });
+    const due = (s: (typeof rows)[number]) => dec(s.net.toString()).plus(s.tax.toString()).minus(s.withholding.toString()).minus(s.collected.toString());
+    const hit = rows.filter((s) => (intent.number ? s.number.toLowerCase() === intent.number.toLowerCase() : due(s).gt(0)) && (!intent.customer || matchesSearch(intent.customer, [s.job.customer.name])));
+    if (!hit.length) return { transcript, message: "No encuentro esa factura pendiente de cobro." };
+    if (hit.length > 1) return { transcript, message: `Hay ${hit.length} facturas que encajan (${hit.slice(0, 4).map((s) => s.number).join(", ")}). Dime el número de factura.` };
+    const s = hit[0], collected = dec(s.collected.toString()).plus(amount);
+    if (collected.gt(dec(s.net.toString()).plus(s.tax.toString()).minus(s.withholding.toString()))) return { transcript, message: `El cobro supera lo pendiente de la factura ${s.number} (${due(s).toFixed(2)} €).` };
+    return {
+      transcript,
+      proposal: { text: transcript, action: "payment", summary: `Cobro de ${amount.toFixed(2)} € · ${s.job.customer.name} · factura ${s.number} (pendiente tras el cobro: ${due(s).minus(amount).toFixed(2)} €)`, payload: { saleId: s.id, collected: collected.toFixed(2) } },
+    };
+  }
+  if (intent.action === "approve") {
+    const jobs = await db.job.findMany({ where: { companyId, archivedAt: null }, include: { customer: true }, orderBy: { openedAt: "desc" }, take: 300 });
+    const pool = intent.customer ? jobs.filter((j) => matchesSearch(intent.customer!, [j.customer.name])) : jobs;
+    const job = intent.job && intent.job !== "last" ? pool.find((j) => matchesSearch(intent.job!, [j.name, j.number])) : pool[0];
+    if (!job) return { transcript, message: "No encuentro ese trabajo." };
+    const quote = await db.quote.findFirst({ where: { jobId: job.id, approved: false }, orderBy: { id: "desc" } });
+    if (!quote) return { transcript, message: `El trabajo «${job.name}» no tiene presupuestos pendientes de aprobar.` };
+    return { transcript, proposal: { text: transcript, action: "approveQuote", summary: `Aprobar presupuesto «${quote.name}» · ${job.customer.name} · ${job.number} ${job.name}`, payload: { quoteId: quote.id } } };
+  }
+  if (intent.action === "find") {
+    const hits: { label: string; name: string; phone: string; email: string; address: string; extra: string }[] = [];
+    if (intent.kind !== "supplier") {
+      const rows = await db.customer.findMany({ where: { companyId }, include: { jobs: { where: { archivedAt: null }, select: { name: true }, take: 3 } } });
+      for (const x of rows) if (matchesSearch(intent.name, [x.name])) hits.push({ label: "cliente", name: x.name, phone: x.phone, email: x.email, address: x.address, extra: x.jobs.length ? `trabajos abiertos: ${x.jobs.map((j) => j.name).join(", ")}` : "sin trabajos abiertos" });
+    }
+    if (intent.kind !== "customer") {
+      const rows = await db.supplier.findMany({ where: { companyId } });
+      for (const x of rows) if (matchesSearch(intent.name, [x.name])) hits.push({ label: "proveedor", name: x.name, phone: x.phone, email: x.email, address: "", extra: x.contact ? `contacto: ${x.contact}` : "" });
+    }
+    if (!hits.length) return { transcript, message: `No encuentro a «${intent.name}».` };
+    if (hits.length > 1) return { transcript, message: `Hay ${hits.length} que encajan: ${hits.slice(0, 5).map((h) => `${h.name} (${h.label})`).join(", ")}. Dime el nombre completo.` };
+    const h = hits[0];
+    return { transcript, message: [`${h.name}, ${h.label}`, h.phone && `teléfono ${h.phone}`, h.email, h.address, h.extra].filter(Boolean).join(" · ") + "." };
+  }
   if (intent.action === "contact") {
     const label = intent.kind === "customer" ? "cliente" : "proveedor";
     const rows = await (intent.kind === "customer" ? db.customer.findMany({ where: { companyId }, select: { name: true } }) : db.supplier.findMany({ where: { companyId }, select: { name: true } }));

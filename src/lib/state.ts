@@ -72,7 +72,7 @@ export async function getState(u: Actor) {
       }),
     ]);
     return {
-      user: { id: u.id, name: u.name, role: u.role, workerId: u.worker?.id },
+      user: { id: u.id, name: u.name, role: u.role, workerId: u.worker?.id, homeLayout: u.homeLayout },
       company,
       jobs: jobs.map(({ _count, sales, ...j }) => ({ ...j, status: jobStatus({ status: j.status, finishedAt: j.finishedAt, hasActivity: _count.hours + _count.costs + _count.stockMovements > 0, sales }), costs: [], quotes: [], sales: [] })),
       documents,
@@ -200,7 +200,7 @@ export async function getState(u: Actor) {
     };
   });
   return {
-    user: { id: u.id, name: u.name, role: u.role },
+    user: { id: u.id, name: u.name, role: u.role, homeLayout: u.homeLayout },
     company,
     jobs: result,
     documents,

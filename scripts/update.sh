@@ -17,10 +17,10 @@ echo "Copia previa: $now"
 
 docker compose build web
 docker compose up -d --no-build
+state=starting
 echo -n "Comprobando"
 for _ in $(seq 1 60); do
-  state=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q web)" 2>/dev/null || echo starting)
-  [ "$state" = "healthy" ] && break
+  curl -fsS http://localhost:3000/api/health >/dev/null 2>&1 && state=healthy && break
   echo -n "."; sleep 5
 done
 echo

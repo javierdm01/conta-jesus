@@ -129,7 +129,7 @@ export type Doc = {
 export type TemplateLine = { description: string; unit: string; quantity: string; price: string };
 export type State = {
   templates: { id: string; name: string; lines: TemplateLine[] }[];
-  user: { id: string; name: string; role: string; workerId?: string };
+  user: { id: string; name: string; role: string; workerId?: string; homeLayout?: unknown };
   company: { name: string; taxId?: string };
   jobs: Job[];
   customers: Customer[];

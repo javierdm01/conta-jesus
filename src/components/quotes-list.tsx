@@ -1,4 +1,5 @@
 "use client";
+import { jobPath } from "@/lib/job-path";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -52,7 +53,7 @@ export default function QuotesList({ jobs, onNew, refresh }: { jobs: Job[]; onNe
                 {rows.map(({ q, j }) => (
                   <tr key={q.id}>
                     <td><strong>{q.name}</strong></td>
-                    <td><Link href={`/trabajos/${j.id}`} className="job-link">{j.number} · {j.name}</Link></td>
+                    <td><Link href={jobPath(j)} className="job-link">{j.number} · {j.name}</Link></td>
                     <td>{j.customer.name}</td>
                     <td className="r">{eur(q.cost)}</td>
                     <td className="r"><strong>{eur(q.net)}</strong></td>

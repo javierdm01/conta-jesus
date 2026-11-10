@@ -1,5 +1,6 @@
 "use client";
 import { uuid } from "@/lib/uuid";
+import { jobPath } from "@/lib/job-path";
 import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -25,7 +26,6 @@ import {
   Check,
   Download,
   RefreshCw,
-  ShieldCheck,
   Trash2,
   Euro,
   Wallet,
@@ -71,6 +71,7 @@ const BulkUpload = dynamic(() => import("./bulk-upload"), { loading: () => <Page
 const CreditReview = dynamic(() => import("./inventory/credit-review"), { loading: () => <PageSkeleton /> });
 const SupplierAccounts = dynamic(() => import("./supplier-accounts"), { loading: () => <PageSkeleton /> });
 const InvoicePage = dynamic(() => import("./invoice-page"), { loading: () => <PageSkeleton /> });
+import HomeBoard from "./home-board";
 const AnalyticsHome = dynamic(() => import("./analytics-home"), { ssr: false, loading: () => <PageSkeleton /> });
 const ContactsHub = dynamic(() => import("./contacts-hub"), { loading: () => <PageSkeleton /> });
 const SalesHub = dynamic(() => import("./sales-hub"), { loading: () => <PageSkeleton /> });
@@ -88,6 +89,7 @@ const ServiceChart = dynamic(() => import("./service-chart"), {
 
 import { Button } from "./ui/button";
 import { NavigationStatus } from "./navigation-status";
+import { MoreMenu } from "./more-menu";
 import { Dialog } from "./ui/dialog";
 import { cents, dec, lineNet, quotePrice, sum } from "@/lib/money";
 import type { OcrSuggestion } from "@/lib/ocr";
@@ -856,9 +858,9 @@ export function Dashboard({
           </thead>
           <tbody>
             {rows.map((j) => (
-              <tr key={j.id} className="row-link" onClick={() => router.push(`/trabajos/${j.id}`)}>
+              <tr key={j.id} className="row-link" onClick={() => router.push(jobPath(j))}>
                 <td>
-                  <Link className="job-link" href={`/trabajos/${j.id}`}>
+                  <Link className="job-link" href={jobPath(j)}>
                     {j.name}
                   </Link>
                   <div className="muted">
@@ -892,7 +894,7 @@ export function Dashboard({
                   {isAdmin && <button className="text-button mr-3" aria-label={`${j.archivedAt ? "Recuperar" : "Eliminar de la lista"} ${j.name}`} onClick={(e) => { e.stopPropagation(); void setJobArchived(j, !j.archivedAt); }}>{j.archivedAt ? "Recuperar" : "Eliminar"}</button>}
                   <Link
                     prefetch={true}
-                    href={`/trabajos/${j.id}`}
+                    href={jobPath(j)}
                     aria-label={`Abrir ${j.name}`}
                   >
                     <ChevronRight size={16} className="text-slate-400" />
@@ -1222,22 +1224,64 @@ export function Dashboard({
     );
   const jobDetail = (j: Job) => (
     <>
-      <div className="page-head">
-        <div>
-          <Link href="/trabajos" className="text-button flex gap-2 mb-4">
-            <ArrowLeft size={15} />
-            Todos los trabajos
-          </Link>
-          <div className="eyebrow">EXPEDIENTE {j.number}</div>
-          <h1 className="mt-2">{j.name}</h1>
-          <p className="subtitle">
-            {j.customer.name} · {j.service}
-          </p>
+      <header className="jd-head">
+        <Link href="/trabajos" className="text-button flex gap-2 mb-3">
+          <ArrowLeft size={15} />
+          Todos los trabajos
+        </Link>
+        <div className="jd-title">
+          <div>
+            <div className="eyebrow">EXPEDIENTE {j.number}</div>
+            <h1>{j.name}</h1>
+          </div>
+          <Pill>{j.status}</Pill>
         </div>
-        <Pill>{j.status}</Pill>
-      </div>
-      <p className="small-note mb-5">El estado se actualiza con las horas, materiales, facturas y cobros. «Cobrado» requiere marcar el trabajo como finalizado y cobrar todas sus facturas.</p>
-      {j.archivedAt && <div className="info-banner mb-5">Trabajo retirado. Sus datos e historial se conservan; recupéralo para volver a trabajar con él.</div>}
+        <dl className="jd-info">
+          <div>
+            <dt>Cliente</dt>
+            <dd>{j.customer.name}</dd>
+          </div>
+          <div>
+            <dt>Dirección</dt>
+            <dd>{j.address ? <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(j.address)}`} target="_blank" rel="noreferrer">{j.address}</a> : "Sin dirección"}</dd>
+          </div>
+          <div>
+            <dt>Técnico</dt>
+            <dd>{j.worker?.name ?? "Sin asignar"}</dd>
+          </div>
+          <div>
+            <dt>Servicio</dt>
+            <dd>{j.service}</dd>
+          </div>
+        </dl>
+      </header>
+      {j.archivedAt && <div className="info-banner mb-5">Trabajo retirado. Sus datos e historial se conservan; recupéralo para volver a trabajar con él.{isAdmin && <> <button className="text-button" onClick={() => void setJobArchived(j, false)}>Recuperar trabajo</button></>}</div>}
+      {!j.archivedAt && <div className="jd-actions">
+        <Button onClick={createHours}>
+          <Clock size={16} />
+          Registrar horas
+        </Button>
+        <Button variant="outline" onClick={() => setMaterial(true)}>
+          <Package size={16} />
+          Añadir material
+        </Button>
+        {isAdmin && j.sales.length === 0 && <Button className="job-invoice" onClick={openInvoice}><FilePlus2 size={18} /> Facturar trabajo</Button>}
+        {isAdmin && j.status === "Pendiente" && <Button variant="outline" onClick={() => run("status", { jobId: j.id, status: "En proceso" })}>Iniciar trabajo</Button>}
+        {(!(j.finishedAt || j.status === "Finalizado") || isAdmin) && <Button variant="outline" onClick={() => run("status", { jobId: j.id, status: (j.finishedAt || j.status === "Finalizado") ? "En proceso" : "Finalizado" })}>{(j.finishedAt || j.status === "Finalizado") ? "Reabrir trabajo" : "Marcar finalizado"}</Button>}
+        <MoreMenu>
+          <Link href={`/inventario?trabajo=${j.id}`} role="menuitem">Usar material de almacén</Link>
+          <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
+          <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
+          {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
+          {isAdmin && <button role="menuitem" onClick={() => openInvoice()}>Registrar factura</button>}
+          {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
+          {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
+        </MoreMenu>
+      </div>}
+      <details className="jd-help">
+        <summary>¿Cómo cambia el estado del trabajo?</summary>
+        <p>Se actualiza con las horas, materiales, facturas y cobros. «Cobrado» requiere marcar el trabajo como finalizado y cobrar todas sus facturas.</p>
+      </details>
       {isAdmin && j.metrics && (
         <div className="stats">
           <Stat
@@ -1260,35 +1304,6 @@ export function Dashboard({
           />
         </div>
       )}
-      <Panel
-        title="Datos del trabajo"
-        action={
-          <div className="flex gap-3">
-            {isAdmin && !j.archivedAt && (
-              <button className="text-button" onClick={() => editJob(j)}>
-                Editar
-              </button>
-            )}
-            {isAdmin && <button className="text-button" onClick={() => void setJobArchived(j, !j.archivedAt)}>{j.archivedAt ? "Recuperar trabajo" : "Eliminar de la lista"}</button>}
-            {!j.archivedAt && (!(j.finishedAt || j.status === "Finalizado") || isAdmin) && <button className="text-button" onClick={() => run("status", { jobId: j.id, status: (j.finishedAt || j.status === "Finalizado") ? "En proceso" : "Finalizado" })}>{(j.finishedAt || j.status === "Finalizado") ? "Reabrir trabajo" : "Marcar finalizado"}</button>}
-          </div>
-        }
-      >
-        <dl className="detail-summary">
-          <div>
-            <dt>Cliente</dt>
-            <dd>{j.customer.name}</dd>
-          </div>
-          <div>
-            <dt>Dirección</dt>
-            <dd>{j.address || "Sin dirección"}</dd>
-          </div>
-          <div>
-            <dt>Técnico</dt>
-            <dd>{j.worker?.name ?? "Sin asignar"}</dd>
-          </div>
-        </dl>
-      </Panel>
       {(j.pendingStockCosts ?? 0) > 0 && (
         <div className="info-banner">
           <Clock size={22} />
@@ -1298,26 +1313,6 @@ export function Dashboard({
           </div>
         </div>
       )}
-      {!j.archivedAt && <div className="actions mb-6">
-        <Button onClick={createHours}>
-          <Clock size={16} />
-          Registrar horas
-        </Button>
-        <Button variant="outline" onClick={() => setMaterial(true)}>
-          <Package size={16} />
-          Añadir material
-        </Button>
-        <details className="more-menu">
-          <summary>Más</summary>
-          <div>
-            <Link href={`/inventario?trabajo=${j.id}`}>Usar material de almacén</Link>
-            <button onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
-            <button onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
-            {isAdmin && <button onClick={createQuote}>Crear presupuesto</button>}
-            {isAdmin && <button onClick={() => openInvoice()}>Registrar factura</button>}
-          </div>
-        </details>
-      </div>}
       {!j.archivedAt && !(isAdmin ? j.costs.length : s.documents.some((d) => d.jobId === j.id)) && !j.hours.length && (
         <p className="small-note mb-6">Aún no hay horas ni materiales en este trabajo. Usa los botones de arriba para añadirlos.</p>
       )}
@@ -1676,7 +1671,7 @@ export function Dashboard({
                       <>
                         <Section title="Trabajos" count={jobHits.length}>
                           {jobHits.map((j) => (
-                            <Link className="sr-card" key={j.id} href={`/trabajos/${j.id}`}>
+                            <Link className="sr-card" key={j.id} href={jobPath(j)}>
                               <strong>{j.number} · {j.name}</strong>
                               <span>{j.customer.name}</span>
                               <small>{j.address || "Sin dirección"}</small>
@@ -1763,42 +1758,6 @@ export function Dashboard({
           )}
           {!section && (
             <>
-              <div className="page-head">
-                <div>
-                  <div className="eyebrow">{s.company.name.toUpperCase()}</div>
-                  <h1 className="mt-2">Todo bajo control.</h1>
-                  <p className="subtitle">
-                    Así va tu empresa. Sin perder de vista lo que importa.
-                  </p>
-                </div>
-              </div>
-              {isAdmin ? (
-                <>
-                  <AnalyticsHome />
-                </>
-              ) : (
-                <div className="stats">
-                  <Stat
-                    label="Mis trabajos"
-                    value={String(s.jobs.length)}
-                    note="Trabajos que tienes asignados"
-                    icon={BriefcaseBusiness}
-                  />
-                  <Stat
-                    label="Por terminar"
-                    value={String(
-                      s.jobs.filter(
-                        (j) =>
-                          !["Finalizado", "Facturado", "Cobrado"].includes(
-                            j.status,
-                          ),
-                      ).length,
-                    )}
-                    note="Pendientes o en curso"
-                    icon={Clock}
-                  />
-                </div>
-              )}
               {!s.jobs.length && (
                 <div className="info-banner">
                   <Zap size={25} />
@@ -1810,45 +1769,62 @@ export function Dashboard({
                   </div>
                 </div>
               )}
-              <div className="two-col">
-                <div>
-                  <Panel
-                    title="Trabajos en marcha"
-                    subtitle="Cada material, cada hora y cada detalle, en su sitio."
-                    action={
-                      <Link href="/trabajos" className="text-button flex gap-1">
-                        Ver todos
-                        <ArrowUpRight size={14} />
-                      </Link>
-                    }
-                  >
-                    {jobTable(
-                      jobs.filter((j) => !["Finalizado", "Facturado", "Cobrado"].includes(j.status)).slice(0, 5),
-                    )}
-                  </Panel>
-                  <Panel
-                    title="Documentos por revisar"
-                    subtitle="Confirma los datos antes de incorporarlos a los costes."
-                  >
-                    {docsTable(
-                      s.documents
-                        .filter((d) =>
-                          ["REVIEW", "FAILED", "QUEUED", "PROCESSING"].includes(
-                            d.status,
+              <HomeBoard
+                userId={s.user.id}
+                initial={s.user.homeLayout}
+                company={s.company.name}
+                links={nav.filter((n) => n.href !== "/" && (isAdmin || ["/trabajos", "/horas", "/inventario", "/facturas"].includes(n.href)))}
+                defaultLinks={isAdmin ? ["/trabajos", "/ventas", "/contactos", "/inventario", "/horas", "/gastos"] : ["/trabajos", "/horas"]}
+                blocks={[
+                  ...(isAdmin
+                    ? [{ id: "analytics", title: "Análisis del negocio", wide: true, node: <AnalyticsHome /> }]
+                    : [
+                        {
+                          id: "mystats",
+                          title: "Mis trabajos",
+                          wide: true,
+                          node: (
+                            <div className="stats">
+                              <Stat label="Mis trabajos" value={String(s.jobs.length)} note="Asignados a ti" icon={BriefcaseBusiness} />
+                              <Stat label="Por terminar" value={String(s.jobs.filter((j) => !["Finalizado", "Facturado", "Cobrado"].includes(j.status)).length)} note="Pendientes o en curso" icon={Clock} />
+                            </div>
                           ),
-                        )
-                        .slice(0, 5),
-                      true,
-                    )}
-                  </Panel>
-                </div>
-                <div>
-                  {isAdmin && (
-                    <Panel
-                      title="Cómo mejorar mi negocio"
-                      subtitle="Conclusiones basadas en tus registros."
-                    >
-                      {s.jobs.some((j) => Number(j.metrics?.net) > 0 && Number(j.metrics?.gross) < 0) ? (
+                        },
+                      ]),
+                  {
+                    id: "jobs",
+                    title: "Trabajos en marcha",
+                    node: (
+                      <Panel
+                        title="Trabajos en marcha"
+                        action={
+                          <Link href="/trabajos" className="text-button flex gap-1">
+                            Ver todos
+                            <ArrowUpRight size={14} />
+                          </Link>
+                        }
+                      >
+                        {jobTable(jobs.filter((j) => !["Finalizado", "Facturado", "Cobrado"].includes(j.status)).slice(0, 5))}
+                      </Panel>
+                    ),
+                  },
+                  {
+                    id: "docs",
+                    title: "Documentos por revisar",
+                    node: (
+                      <Panel title="Documentos por revisar">
+                        {docsTable(s.documents.filter((d) => ["REVIEW", "FAILED", "QUEUED", "PROCESSING"].includes(d.status)).slice(0, 5), true)}
+                      </Panel>
+                    ),
+                  },
+                  ...(isAdmin
+                    ? [
+                        {
+                          id: "insights",
+                          title: "Cómo mejorar mi negocio",
+                          node: (
+                            <Panel title="Cómo mejorar mi negocio">
+                              {s.jobs.some((j) => Number(j.metrics?.net) > 0 && Number(j.metrics?.gross) < 0) ? (
                         <div className="record-list">
                           {s.jobs
                             .filter((j) => Number(j.metrics?.net) > 0 && Number(j.metrics?.gross) < 0)
@@ -1858,7 +1834,7 @@ export function Dashboard({
                                   <Link
                                     prefetch={true}
                                     className="job-link"
-                                    href={`/trabajos/${j.id}`}
+                                    href={jobPath(j)}
                                   >
                                     {j.name}
                                   </Link>
@@ -1878,15 +1854,13 @@ export function Dashboard({
                           description="Cuando registres trabajos y costes, podrás detectar desviaciones. No se proponen precios sin un histórico suficiente."
                         />
                       )}
-                    </Panel>
-                  )}
-                </div>
-              </div>
-              <p className="small-note flex items-center gap-2">
-                <ShieldCheck size={14} />
-                Resumen de todos los registros · importes en euros · los ceros
-                indican que aún no hay importes registrados.
-              </p>
+                            </Panel>
+                          ),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
             </>
           )}
           {section === "trabajos" &&

@@ -65,12 +65,14 @@ services:
     cpus: 2.0
   whisper:
     build: ./voice
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
     volumes: ["whisper-models:/models"]
     mem_limit: 1500m
     restart: unless-stopped
   tts:
     build: ./voice/tts
-    mem_limit: 800m
+    mem_limit: 1500m
     restart: unless-stopped
   backup:
     image: postgres:16-bookworm

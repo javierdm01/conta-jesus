@@ -8,9 +8,12 @@ export async function POST(req: Request) {
     checkOrigin(req);
     await currentUser();
     const url = process.env.TTS_URL;
-    const text = String((await req.json()).text ?? "").slice(0, 600);
+    const body = await req.json();
+    const text = String(body.text ?? "").slice(0, 600);
+    const voice = /^[a-z0-9-]{1,20}$/.test(body.voice ?? "") ? body.voice : "davefx";
+    const speed = Math.min(Math.max(Number(body.speed) || 1, 0.6), 1.6);
     if (!url || !text.trim()) return Response.json({ error: "Voz no disponible." }, { status: 503 });
-    const r = await fetch(`${url}/speak`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+    const r = await fetch(`${url}/speak`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, voice, speed }), signal: AbortSignal.timeout(20000) }).catch(() => null);
     if (!r?.ok) return Response.json({ error: "Voz no disponible." }, { status: 503 });
     return new Response(await r.arrayBuffer(), { headers: { "Content-Type": "audio/wav" } });
   } catch (e) {

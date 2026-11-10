@@ -46,6 +46,7 @@ model User {
   sessions      Session[]
   accounts      Account[]
   worker        Worker?
+  homeLayout    Json?
 }
 
 model Session {

@@ -1,4 +1,5 @@
 "use client";
+import { jobPath } from "@/lib/job-path";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import type { Doc, Job, Sale } from "@/lib/workspace-types";
@@ -39,7 +40,7 @@ export default function InvoiceDetail({ sale, job, onPayment, documents, refresh
             {sale.customerEmail && <p className="small-note">{sale.customerEmail}</p>}
             {job && (
               <p className="small-note">
-                Trabajo: <Link href={`/trabajos/${job.id}`} className="text-button">{job.number} · {job.name}</Link>
+                Trabajo: <Link href={jobPath(job)} className="text-button">{job.number} · {job.name}</Link>
               </p>
             )}
           </div>

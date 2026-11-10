@@ -399,6 +399,12 @@ export async function operate(u: Actor, action: string, input: unknown) {
       return row;
     });
   }
+  if (action === "home-layout") {
+    const item = z.object({ id: z.string().max(60), wide: z.boolean(), title: z.string().max(80).optional(), text: z.string().max(2000).optional(), links: z.array(z.string().max(40)).max(20).optional() });
+    const { items } = z.object({ items: z.array(item).max(40) }).parse(input);
+    await db.user.update({ where: { id: u.id }, data: { homeLayout: items } });
+    return { ok: true };
+  }
   if (action === "sale-notes" || action === "sale-attach" || action === "sale-detach") {
     admin(u);
     const { saleId } = z.object({ saleId: v.id }).parse(input);
