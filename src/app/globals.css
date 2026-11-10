@@ -359,3 +359,27 @@ input[type=range]{padding:0;border:0;box-shadow:none;margin:8px 0}
 .mm-list{position:fixed;z-index:71;left:0;right:0;bottom:0;top:auto;min-width:0;max-height:75dvh;overflow:auto;border:0;border-radius:20px 20px 0 0;padding:8px 8px calc(10px + env(safe-area-inset-bottom))}
 .mm-list a,.mm-list button{min-height:52px;font-size:16px}
 }
+.jd-tabs{display:flex;gap:4px;overflow-x:auto;margin:0 0 16px;border-bottom:1px solid #e4ebea;scrollbar-width:none}
+.jd-tabs::-webkit-scrollbar{display:none}
+.jd-tabs button{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;min-height:46px;padding:0 16px;border:0;border-bottom:3px solid transparent;background:transparent;color:#617d6b;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.jd-tabs button.on{color:#146346;border-bottom-color:#146346}
+.jd-tabs button span{min-width:20px;padding:1px 6px;border-radius:10px;background:#edf2ee;color:#44604f;font-size:11px;text-align:center}
+.jd-tabs button.on span{background:#d9ece1}
+@media(max-width:760px){.jd-tabs{margin-left:-16px;margin-right:-16px;padding:0 8px}}
+.jd-sub{margin:6px 0 0;font-size:16px;color:#2f4a3c;overflow-wrap:anywhere}
+.jd-sub a{color:inherit;text-decoration:underline;text-decoration-color:#9bb3a5;text-underline-offset:3px}
+.jd-meta{margin:3px 0 0;font-size:12px;color:#7a8f82}
+.jd-title{margin-bottom:16px}
+@media(max-width:760px){.jd-actions{display:flex;gap:8px}.jd-actions>*{width:auto;flex:1 1 0;min-width:0}.jd-actions>.mm{flex:0 0 auto}.jd-actions .mm-trigger{width:auto;padding:0 14px}}
+.jd-title{align-items:flex-start}
+.jd-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.jd-meta a{color:#146346;text-decoration:underline;text-underline-offset:3px}
+.jd-sub a{font-weight:600}
+.jd-totals{display:flex;gap:10px;flex-shrink:0}
+.jd-totals>div{display:grid;gap:2px;min-width:112px;padding:10px 16px;background:#fff;border:1px solid #ececec;border-radius:14px;text-align:right}
+.jd-totals span{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#6b7f73}
+.jd-totals strong{font-size:20px;line-height:1.1}
+.jd-totals small{font-size:12px;color:#7a8f82}
+.jd-totals .total{background:#146346;border-color:#146346}
+.jd-totals .total span,.jd-totals .total strong{color:#fff}
+@media(max-width:900px){.jd-title{flex-direction:column}.jd-totals{width:100%}.jd-totals>div{flex:1;min-width:0;padding:10px 12px;text-align:left}.jd-totals strong{font-size:17px}}

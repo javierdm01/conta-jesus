@@ -26,7 +26,7 @@ type Trace = { model: string; promptTokens: number; completionTokens: number; ms
 const PRICE_IN = Number(process.env.OPENAI_PRICE_IN ?? 0.15), PRICE_OUT = Number(process.env.OPENAI_PRICE_OUT ?? 0.6);
 const costOf = (t: Trace) => (t.promptTokens * PRICE_IN + t.completionTokens * PRICE_OUT) / 1e6;
 
-async function record(u: Actor, row: { kind: string; transcript?: string; result?: string } & Partial<Trace>) {
+export async function recordVoice(u: Actor, row: { kind: string; transcript?: string; result?: string } & Partial<Trace>) {
   try {
     await db.voiceLog.create({
       data: {
@@ -137,27 +137,33 @@ export async function transcribe(u: Actor, audio: File, hint = "") {
   if (hint) form.append("prompt", hint);
   const r = await fetch(`${url}/transcribe`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) }).catch(() => null);
   if (!r?.ok) {
-    await record(u, { kind: "STT", ok: false, ms: Date.now() - t0, error: "Fallo de transcripción" });
+    await recordVoice(u, { kind: "STT", ok: false, ms: Date.now() - t0, error: "Fallo de transcripción" });
     throw new AppError("No se pudo transcribir el audio. Inténtalo de nuevo o escribe la orden.", 502);
   }
   const text = String((await r.json()).text ?? "").trim();
-  await record(u, { kind: "STT", transcript: text, model: "whisper-small", ms: Date.now() - t0 });
+  await recordVoice(u, { kind: "STT", transcript: text, model: "whisper-small", ms: Date.now() - t0 });
   return text;
 }
 
 export async function interpret(u: Actor, transcript: string): Promise<Reply> {
+  const r = await interpretOrder(u, transcript);
+  await recordVoice(u, { kind: "REPLY", transcript, result: r.proposal ? `Propone: ${r.proposal.summary}` : (r.message ?? "") });
+  return r;
+}
+
+async function interpretOrder(u: Actor, transcript: string): Promise<Reply> {
   const [custs, openJobs] = await Promise.all([
     db.customer.findMany({ where: { companyId: u.companyId }, select: { name: true }, orderBy: { name: "asc" }, take: 300 }),
     db.job.findMany({ where: { companyId: u.companyId, archivedAt: null }, select: { name: true, customer: { select: { name: true } } }, orderBy: { openedAt: "desc" }, take: 12 }),
   ]);
   const names = custs.map((c) => c.name);
   let intent = parseCommand(transcript, names);
-  if (intent) await record(u, { kind: "RULES", transcript, result: JSON.stringify(intent) });
+  if (intent) await recordVoice(u, { kind: "RULES", transcript, result: JSON.stringify(intent) });
   else {
     const m = await askModel(transcript, { customers: names.slice(0, 40), jobs: openJobs.map((j) => `${j.customer.name} · ${j.name}`) });
     if (m) {
       intent = m.intent;
-      await record(u, { kind: "OPENAI", transcript, result: m.intent ? JSON.stringify(m.intent) : m.trace.ok ? "sin intención" : "", ...m.trace });
+      await recordVoice(u, { kind: "OPENAI", transcript, result: m.intent ? JSON.stringify(m.intent) : m.trace.ok ? "sin intención" : "", ...m.trace });
     }
   }
   if (!intent) return { transcript, message: (llmBroken() ? "El asistente avanzado no está activo (la clave de OpenAI no es válida; avisa al responsable). " : "") + "No he entendido la orden. Prueba, por ejemplo: «créame al cliente Francisco»." };

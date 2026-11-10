@@ -35,7 +35,7 @@ const FIXED = ["Hecho, guardado.", "Vale, lo dejo sin guardar."];
 const LABEL: Record<Phase, string> = { idle: "Toca para hablar", listening: "Te escucho… toca para enviar", thinking: "Pensando…", speaking: "Hablando…" };
 
 // Conversación por voz: escucha hasta que callas, responde en voz alta y pide confirmación antes de guardar.
-export default function VoiceDialog({ close, confirm }: { close: () => void; confirm: (action: string, payload: unknown) => Promise<void> }) {
+export default function VoiceDialog({ close, confirm }: { close: () => void; confirm: (action: string, payload: unknown, meta: { text: string; summary: string }) => Promise<void> }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [log, setLog] = useState<Line[]>([]);
   const [text, setText] = useState("");
@@ -132,7 +132,7 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
         pending.current = null;
         setPhase("thinking");
         try {
-          await confirm(p.action, p.payload);
+          await confirm(p.action, p.payload, { text: p.text, summary: p.summary });
           return say("Hecho, guardado.", next);
         } catch {
           return say("No he podido guardarlo.", next);

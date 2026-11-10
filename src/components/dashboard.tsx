@@ -340,6 +340,7 @@ export function Dashboard({
   }, [mutate]);
   const [searchTerm, setSearchTerm] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [jobTabState, setJobTabState] = useState({ id: "", tab: "" }); // la pestaña recuerda a qué trabajo pertenece: otro trabajo vuelve a abrir en la primera
   useEffect(() => {
     const close = (e: MouseEvent) => !(e.target as HTMLElement).closest(".search") && setSearchOpen(false);
     document.addEventListener("mousedown", close);
@@ -1231,237 +1232,238 @@ export function Dashboard({
         </Link>
         <div className="jd-title">
           <div>
-            <div className="eyebrow">EXPEDIENTE {j.number}</div>
             <h1>{j.name}</h1>
+            <p className="jd-sub">
+              {isAdmin ? <Link href={`/clientes/${j.customer.id}`} title="Ver ficha del cliente">{j.customer.name}</Link> : j.customer.name}
+              {j.address && <> · <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(j.address)}`} target="_blank" rel="noreferrer">{j.address}</a></>}
+            </p>
+            <div className="jd-meta">
+              <Pill>{j.status}</Pill>
+              <span>{j.number} · {j.service} · {j.worker?.name ?? "Sin técnico"}</span>
+              {isAdmin && s.jobs.filter((x) => x.customer.id === j.customer.id && x.id !== j.id).length > 0 && (
+                <Link href={`/clientes/${j.customer.id}`}>{s.jobs.filter((x) => x.customer.id === j.customer.id && x.id !== j.id).length} trabajos más de este cliente</Link>
+              )}
+            </div>
           </div>
-          <Pill>{j.status}</Pill>
+          <div className="jd-totals">
+            {isAdmin && (
+              <div>
+                <span>Materiales</span>
+                <strong>{euro(sum(j.costs.map((c) => c.amount)).toString())}</strong>
+              </div>
+            )}
+            <div>
+              <span>Horas</span>
+              <strong>{number(sum(j.hours.map((h) => h.hours)).toString())} h</strong>
+              {isAdmin && j.metrics && <small>{euro(j.metrics.labor)}</small>}
+            </div>
+            {isAdmin && j.metrics && (
+              <div className="total">
+                <span>Costes totales</span>
+                <strong>{euro(j.metrics.direct)}</strong>
+              </div>
+            )}
+          </div>
         </div>
-        <dl className="jd-info">
-          <div>
-            <dt>Cliente</dt>
-            <dd>{j.customer.name}</dd>
-          </div>
-          <div>
-            <dt>Dirección</dt>
-            <dd>{j.address ? <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(j.address)}`} target="_blank" rel="noreferrer">{j.address}</a> : "Sin dirección"}</dd>
-          </div>
-          <div>
-            <dt>Técnico</dt>
-            <dd>{j.worker?.name ?? "Sin asignar"}</dd>
-          </div>
-          <div>
-            <dt>Servicio</dt>
-            <dd>{j.service}</dd>
-          </div>
-        </dl>
       </header>
       {j.archivedAt && <div className="info-banner mb-5">Trabajo retirado. Sus datos e historial se conservan; recupéralo para volver a trabajar con él.{isAdmin && <> <button className="text-button" onClick={() => void setJobArchived(j, false)}>Recuperar trabajo</button></>}</div>}
-      {!j.archivedAt && <div className="jd-actions">
-        <Button onClick={createHours}>
-          <Clock size={16} />
-          Registrar horas
-        </Button>
-        <Button variant="outline" onClick={() => setMaterial(true)}>
-          <Package size={16} />
-          Añadir material
-        </Button>
-        {isAdmin && j.sales.length === 0 && <Button className="job-invoice" onClick={openInvoice}><FilePlus2 size={18} /> Facturar trabajo</Button>}
-        {isAdmin && j.status === "Pendiente" && <Button variant="outline" onClick={() => run("status", { jobId: j.id, status: "En proceso" })}>Iniciar trabajo</Button>}
-        {(!(j.finishedAt || j.status === "Finalizado") || isAdmin) && <Button variant="outline" onClick={() => run("status", { jobId: j.id, status: (j.finishedAt || j.status === "Finalizado") ? "En proceso" : "Finalizado" })}>{(j.finishedAt || j.status === "Finalizado") ? "Reabrir trabajo" : "Marcar finalizado"}</Button>}
-        <MoreMenu>
-          <Link href={`/inventario?trabajo=${j.id}`} role="menuitem">Usar material de almacén</Link>
-          <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
-          <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
-          {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
-          {isAdmin && <button role="menuitem" onClick={() => openInvoice()}>Registrar factura</button>}
-          {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
-          {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
-        </MoreMenu>
-      </div>}
-      <details className="jd-help">
-        <summary>¿Cómo cambia el estado del trabajo?</summary>
-        <p>Se actualiza con las horas, materiales, facturas y cobros. «Cobrado» requiere marcar el trabajo como finalizado y cobrar todas sus facturas.</p>
-      </details>
-      {isAdmin && j.metrics && (
-        <div className="stats">
-          <Stat
-            label="Facturado neto"
-            value={euro(j.metrics.net)}
-            note={`Cobrado con impuestos: ${euro(j.metrics.collected)}`}
-          />
-          <Stat
-            label="Costes directos"
-            value={euro(j.metrics.direct)}
-            note={`Mano de obra: ${euro(j.metrics.labor)} · ${number(j.metrics.hours)} h`}
-            icon={Wallet}
-          />
-          <Stat
-            label="Beneficio bruto"
-            value={Number(j.metrics.net) > 0 ? euro(j.metrics.gross) : "Sin facturar"}
-            note={Number(j.metrics.net) > 0 ? `Margen: ${j.metrics.margin ?? "—"} %` : `Aún sin ventas: ${euro(j.metrics.direct)} de costes`}
-            highlight
-            icon={TrendingUp}
-          />
-        </div>
-      )}
-      {(j.pendingStockCosts ?? 0) > 0 && (
-        <div className="info-banner">
-          <Clock size={22} />
-          <div>
-            <strong>Hay materiales usados pendientes de precio</strong>El
-            resultado será provisional hasta vincular la factura del albarán.
+      {!j.archivedAt && (() => {
+        const finished = !!(j.finishedAt || j.status === "Finalizado");
+        return (
+          <div className="jd-actions">
+            <Button onClick={createHours}>Registrar horas</Button>
+            <Button variant="outline" onClick={() => setMaterial(true)}>Añadir material</Button>
+            <MoreMenu>
+              {isAdmin && j.status === "Pendiente" && <button role="menuitem" onClick={() => run("status", { jobId: j.id, status: "En proceso" })}>Iniciar trabajo</button>}
+              {(!finished || isAdmin) && <button role="menuitem" onClick={() => run("status", { jobId: j.id, status: finished ? "En proceso" : "Finalizado" })}>{finished ? "Reabrir trabajo" : "Marcar finalizado"}</button>}
+              <Link href={`/inventario?trabajo=${j.id}`} role="menuitem">Usar material de almacén</Link>
+              <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
+              <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
+              {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
+              {isAdmin && <button role="menuitem" onClick={() => openInvoice()}>Registrar factura</button>}
+              {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
+              {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
+            </MoreMenu>
           </div>
-        </div>
-      )}
-      {!j.archivedAt && !(isAdmin ? j.costs.length : s.documents.some((d) => d.jobId === j.id)) && !j.hours.length && (
-        <p className="small-note mb-6">Aún no hay horas ni materiales en este trabajo. Usa los botones de arriba para añadirlos.</p>
-      )}
-      <div className="two-col">
-        <div>
-          {(isAdmin ? j.costs.length > 0 : s.documents.some((d) => d.jobId === j.id)) && (
-          <Panel
-            title={
-              isAdmin ? "Materiales y otros costes" : "Documentos del trabajo"
-            }
-            subtitle={
-              isAdmin
-                ? "Solo registros confirmados. Importes netos de IVA recuperable."
-                : undefined
-            }
-          >
-            {isAdmin ? (
-              j.costs.length ? (
-                <div className="record-list">
-                  {j.costs.map((c) => (
-                    <div className="record" key={c.id}>
-                      <div>
-                        {c.description}
-                        <small>
-                          {c.type}
-                          {c.documentId && (
-                            <>
-                              {" "}
-                              ·{" "}
-                              <a
-                                className="underline"
-                                href={`/api/documents/${c.documentId}`}
-                              >
-                                Ver origen
-                              </a>
-                            </>
-                          )}
-                        </small>
-                      </div>
-                      <strong>{euro(c.amount)}</strong>
-                    </div>
-                  ))}
+        );
+      })()}
+      {(() => {
+        const docs = s.documents.filter((d) => d.jobId === j.id);
+        const done = !!(j.finishedAt || ["Finalizado", "Facturado", "Cobrado"].includes(j.status));
+        const tabs = [
+          { id: "costes", label: isAdmin ? "Materiales" : "Documentos", n: isAdmin ? j.costs.length : docs.length, show: true },
+          { id: "horas", label: "Horas", n: j.hours.length, show: true },
+          { id: "facturas", label: "Facturas", n: j.sales.length, show: isAdmin },
+          { id: "docs", label: "Documentos", n: docs.length, show: isAdmin },
+          { id: "resumen", label: "Resumen", n: 0, show: isAdmin && done },
+        ].filter((t) => t.show);
+        const cur = jobTabState.id === j.id ? jobTabState.tab : "";
+        const tab = tabs.some((t) => t.id === cur) ? cur : tabs[0].id;
+        return (
+          <>
+            {(j.pendingStockCosts ?? 0) > 0 && (
+              <div className="info-banner">
+                <Clock size={22} />
+                <div>
+                  <strong>Hay materiales usados pendientes de precio</strong>El resultado será provisional hasta vincular la factura del albarán.
                 </div>
-              ) : (
-                <Empty
-                  title="Sin costes registrados"
-                  description="Añade materiales o confirma una compra en la bandeja de documentos."
-                />
-              )
-            ) : (
-              docsTable(s.documents.filter((d) => d.jobId === j.id))
-            )}
-          </Panel>
-          )}
-          {j.hours.length > 0 && (
-          <Panel
-            title="Horas registradas"
-            subtitle="El coste se conserva con la tarifa del momento del registro."
-          >
-            {j.hours.length ? (
-              <div className="record-list">
-                {j.hours.map((h) => (
-                  <div className="record" key={h.id}>
-                    <div>
-                      {h.worker?.name ?? s.user.name} · {h.activity}
-                      <small>
-                        {fmtDate(h.date)} ·{" "}
-                        {h.billable === false ? "No facturable" : "Facturable"}
-                        {h.notes && ` · ${h.notes}`}
-                      </small>
-                    </div>
-                    <strong>{number(h.hours)} h</strong>
-                  </div>
-                ))}
               </div>
-            ) : (
-              <Empty
-                title="Aún no hay horas"
-                description="Registra el tiempo que has dedicado a este trabajo."
-              />
             )}
-          </Panel>
-          )}
-        </div>
-        <div>
-          {isAdmin && j.quotes.length > 0 && (
-            <Panel title="Presupuesto y ejecución">
-              {j.quotes.length ? (
-                <div className="record-list">
-                  {j.quotes.map((q) => (
-                    <div key={q.id} className="record">
-                      <div>
-                        <strong>{q.name}</strong>
-                        <small>
-                          Coste previsto: {euro(q.cost)} ·{" "}
-                          {number(q.plannedHours)} h
-                        </small>
-                        <small>Precio neto: {euro(q.net)}</small>
-                        {q.approved && j.metrics && (
-                          <small>
-                            Desviación de horas:{" "}
-                            {number(
-                              dec(j.metrics.hours)
-                                .minus(q.plannedHours)
-                                .toString(),
-                            )}{" "}
-                            h
-                          </small>
-                        )}
-                      </div>
-                      {q.approved ? (
-                        <Pill>Aprobado</Pill>
-                      ) : !j.archivedAt ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => run("approveQuote", { quoteId: q.id })}
-                        >
-                          Aprobar
-                        </Button>
-                      ) : null}
+            <div className="jd-tabs" role="tablist">
+              {tabs.map((t) => (
+                <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={tab === t.id ? "on" : ""} onClick={() => setJobTabState({ id: j.id, tab: t.id })}>
+                  {t.label}
+                  {t.n > 0 && <span>{t.n}</span>}
+                </button>
+              ))}
+            </div>
+            {tab === "resumen" && isAdmin && (
+              <>
+                {j.metrics && (
+                  <div className="stats">
+                    <Stat label="Facturado neto" value={euro(j.metrics.net)} note={`Cobrado con impuestos: ${euro(j.metrics.collected)}`} />
+                    <Stat label="Costes directos" value={euro(j.metrics.direct)} note={`Mano de obra: ${euro(j.metrics.labor)} · ${number(j.metrics.hours)} h`} icon={Wallet} />
+                    <Stat
+                      label="Beneficio bruto"
+                      value={Number(j.metrics.net) > 0 ? euro(j.metrics.gross) : "Sin facturar"}
+                      note={Number(j.metrics.net) > 0 ? `Margen: ${j.metrics.margin ?? "—"} %` : `Aún sin ventas: ${euro(j.metrics.direct)} de costes`}
+                      highlight
+                      icon={TrendingUp}
+                    />
+                  </div>
+                )}
+                <Panel title="Presupuesto y ejecución">
+                  {j.quotes.length ? (
+                    <div className="record-list">
+                      {j.quotes.map((q) => (
+                        <div key={q.id} className="record">
+                          <div>
+                            <strong>{q.name}</strong>
+                            <small>Coste previsto: {euro(q.cost)} · {number(q.plannedHours)} h</small>
+                            <small>Precio neto: {euro(q.net)}</small>
+                            {q.approved && j.metrics && <small>Desviación de horas: {number(dec(j.metrics.hours).minus(q.plannedHours).toString())} h</small>}
+                          </div>
+                          {q.approved ? <Pill>Aprobado</Pill> : !j.archivedAt ? <Button variant="outline" size="sm" onClick={() => run("approveQuote", { quoteId: q.id })}>Aprobar</Button> : null}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <Empty
-                  title="Sin presupuesto"
-                  description="Calcula el precio a partir de tus costes y del margen que quieras conseguir."
-                  action={
-                    <Button variant="outline" onClick={createQuote}>
-                      Crear presupuesto
-                    </Button>
-                  }
-                />
-              )}
-            </Panel>
-          )}
-          {s.documents.some((d) => d.jobId === j.id) && (
-            <Panel title="Documentos adjuntos">
-              {docsTable(s.documents.filter((d) => d.jobId === j.id))}
-            </Panel>
-          )}
-        </div>
-      </div>
-      {isAdmin && j.sales.length > 0 && (
-        <Panel title="Facturas del trabajo">{salesTable(j.sales)}</Panel>
-      )}
+                  ) : (
+                    <Empty title="Sin presupuesto" description="Calcula el precio a partir de tus costes y del margen que quieras conseguir." action={!j.archivedAt ? <Button variant="outline" onClick={createQuote}>Crear presupuesto</Button> : undefined} />
+                  )}
+                </Panel>
+              </>
+            )}
+            {tab === "costes" && (
+              <Panel title={isAdmin ? "Materiales y otros costes" : "Documentos del trabajo"} subtitle={isAdmin ? "Solo registros confirmados. Importes netos de IVA recuperable." : undefined}>
+                {isAdmin ? (
+                  j.costs.length ? (
+                    <div className="record-list">
+                      {j.costs.map((c) => (
+                        <div className="record" key={c.id}>
+                          <div>
+                            {c.description}
+                            <small>
+                              {c.type}
+                              {c.documentId && (
+                                <>
+                                  {" "}·{" "}
+                                  <a className="underline" href={`/api/documents/${c.documentId}`}>Ver origen</a>
+                                </>
+                              )}
+                            </small>
+                          </div>
+                          <strong>{euro(c.amount)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty title="Sin materiales ni costes" description="Añade material o confirma una compra en la bandeja de documentos." action={!j.archivedAt ? <Button variant="outline" onClick={() => setMaterial(true)}>Añadir material</Button> : undefined} />
+                  )
+                ) : docs.length ? (
+                  docsTable(docs)
+                ) : (
+                  <Empty title="Sin documentos" description="Aún no hay documentos en este trabajo." />
+                )}
+              </Panel>
+            )}
+            {tab === "horas" && (
+              <Panel title="Horas registradas" subtitle="El coste se conserva con la tarifa del momento del registro.">
+                {j.hours.length ? (
+                  <div className="record-list">
+                    {j.hours.map((h) => (
+                      <div className="record" key={h.id}>
+                        <div>
+                          {h.worker?.name ?? s.user.name} · {h.activity}
+                          <small>
+                            {fmtDate(h.date)} · {h.billable === false ? "No facturable" : "Facturable"}
+                            {h.notes && ` · ${h.notes}`}
+                          </small>
+                        </div>
+                        <strong>{number(h.hours)} h</strong>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Empty title="Aún no hay horas" description="Registra el tiempo que has dedicado a este trabajo." action={!j.archivedAt ? <Button variant="outline" onClick={createHours}>Registrar horas</Button> : undefined} />
+                )}
+              </Panel>
+            )}
+            {tab === "facturas" && isAdmin && <Panel title="Facturas del trabajo">{j.sales.length ? salesTable(j.sales) : <Empty title="Sin facturas" description="Registra la factura de este trabajo cuando esté lista." action={!j.archivedAt ? <Button variant="outline" onClick={() => openInvoice()}>Registrar factura</Button> : undefined} />}</Panel>}
+            {tab === "docs" && isAdmin && <Panel title="Documentos adjuntos">{docs.length ? docsTable(docs) : <Empty title="Sin documentos" description="Fotografía un albarán o añade fotografías desde «Más»." />}</Panel>}
+          </>
+        );
+      })()}
     </>
   );
+  const customerDetail = (c: Customer) => {
+    const rows = s.jobs.filter((j) => j.customer.id === c.id);
+    const tot = (f: (m: NonNullable<Job["metrics"]>) => string) => sum(rows.map((j) => (j.metrics ? f(j.metrics) : 0)));
+    const net = tot((m) => m.net), direct = tot((m) => m.direct), gross = tot((m) => m.gross), collected = tot((m) => m.collected), hours = tot((m) => m.hours);
+    const billed = rows.filter((j) => Number(j.metrics?.net ?? 0) > 0);
+    const margins = billed.map((j) => Number(j.metrics?.margin ?? 0));
+    const open = rows.filter((j) => !j.archivedAt && !(j.finishedAt || ["Finalizado", "Facturado", "Cobrado"].includes(j.status)));
+    const sales = s.sales.filter((x) => x.customerId === c.id || rows.some((j) => j.id === x.jobId));
+    const owed = sum(sales.map((x) => dec(x.net).plus(x.tax).minus(x.withholding).minus(x.collected)));
+    const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(1)} %`);
+    return (
+      <>
+        <header className="jd-head">
+          <Link href="/clientes" className="text-button flex gap-2 mb-3">
+            <ArrowLeft size={15} />
+            Todos los clientes
+          </Link>
+          <div className="jd-title">
+            <div>
+              <h1>{c.name}</h1>
+              <p className="jd-sub">{[c.taxId, c.address].filter(Boolean).join(" · ") || "Datos fiscales y dirección pendientes"}</p>
+              <div className="jd-meta">
+                <span>
+                  {c.phone ? <a href={`tel:${c.phone}`}>{c.phone}</a> : "Sin teléfono"}
+                  {" · "}
+                  {c.email ? <a href={`mailto:${c.email}`}>{c.email}</a> : "Sin correo"}
+                </span>
+              </div>
+            </div>
+            <Button variant="outline" onClick={() => createContact("customer", c)}>Editar cliente</Button>
+          </div>
+        </header>
+        <div className="stats">
+          <Stat label="Facturado neto" value={euro(net.toString())} note={`${sales.length} facturas · ${billed.length} trabajos facturados`} />
+          <Stat label="Cobrado" value={euro(collected.toString())} note={owed.gt(0) ? `Pendiente de cobro: ${euro(owed.toString())}` : "Sin deuda pendiente"} />
+          <Stat label="Costes directos" value={euro(direct.toString())} note={`${number(hours.toString())} h de trabajo`} icon={Wallet} />
+          <Stat label="Beneficio bruto" value={euro(gross.toString())} note={`Margen ponderado: ${pct(net.gt(0) ? gross.div(net).mul(100).toNumber() : null)}`} highlight icon={TrendingUp} />
+        </div>
+        <div className="stats">
+          <Stat label="Trabajos" value={String(rows.length)} note={`${open.length} abiertos · ${rows.length - open.length} terminados o retirados`} />
+          <Stat label="Margen medio por trabajo" value={pct(margins.length ? margins.reduce((a, b) => a + b, 0) / margins.length : null)} note={margins.length ? `Mejor ${pct(Math.max(...margins))} · peor ${pct(Math.min(...margins))}` : "Aún sin trabajos facturados"} />
+          <Stat label="Ticket medio" value={billed.length ? euro(net.div(billed.length).toString()) : "—"} note="Facturado neto por trabajo facturado" />
+          <Stat label="Beneficio por hora" value={hours.gt(0) ? euro(gross.div(hours).toString()) : "—"} note="Beneficio bruto entre horas trabajadas" />
+        </div>
+        <Panel title="Trabajos del cliente">{jobTable(rows)}</Panel>
+        {sales.length > 0 && <Panel title="Facturas del cliente">{salesTable(sales)}</Panel>}
+      </>
+    );
+  };
   const download = () => {
     const rows = [
       [
@@ -2032,7 +2034,8 @@ export function Dashboard({
               )}
             </>
           )}
-          {section === "clientes" && isAdmin && (
+          {section === "clientes" && isAdmin && pathname.split("/")[2] && (s.customers.find((c) => c.id === pathname.split("/")[2]) ? customerDetail(s.customers.find((c) => c.id === pathname.split("/")[2])!) : <Empty title="Cliente no encontrado" description="Puede que se haya eliminado." action={<Link href="/clientes" className="text-button">Volver a clientes</Link>} />)}
+          {section === "clientes" && isAdmin && !pathname.split("/")[2] && (
             <>
               <div className="page-head customer-head">
                 <div>
@@ -2054,7 +2057,7 @@ export function Dashboard({
                   <div className="record-list">
                     {s.customers.filter((c) => matchesSearch(customerQuery, [c.name, c.taxId, c.address, c.phone, c.email])).map((c) => (
                       <div className="record customer-record" key={c.id}>
-                        <div><strong>{c.name}</strong><small>{[c.taxId, c.address].filter(Boolean).join(" · ") || "Datos fiscales y dirección pendientes"}</small><small>{[c.phone, c.email].filter(Boolean).join(" · ") || "Sin datos de contacto"}</small></div>
+                        <div><Link href={`/clientes/${c.id}`}><strong>{c.name}</strong></Link><small>{[c.taxId, c.address].filter(Boolean).join(" · ") || "Datos fiscales y dirección pendientes"}</small><small>{[c.phone, c.email].filter(Boolean).join(" · ") || "Sin datos de contacto"}</small></div>
                         <Button variant="outline" size="sm" onClick={() => createContact("customer", c)} aria-label={`Editar ${c.name}`}>Editar</Button>
                       </div>
                     ))}
@@ -2780,7 +2783,7 @@ export function Dashboard({
           }}
         />
       )}
-      {voice && <VoiceDialog close={() => setVoice(false)} confirm={(a, p) => run(a, p)} />}
+      {voice && <VoiceDialog close={() => setVoice(false)} confirm={async (action, payload, meta) => { await request("/api/voice/confirm", { action, payload, ...meta }); await saved(); }} />}
       {expense && (
         <ExpenseForm
           close={() => setExpense(false)}

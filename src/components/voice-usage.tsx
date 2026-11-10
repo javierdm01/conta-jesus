@@ -4,7 +4,7 @@ import useSWR from "swr";
 type Sum = { calls: number; promptTokens: number; completionTokens: number; costUsd: number };
 type Row = { id: string; createdAt: string; user: string; kind: string; transcript: string; result: string; model: string; promptTokens: number; completionTokens: number; costUsd: number; ms: number; ok: boolean; error: string };
 type Data = { total: Sum; month: Sum; byKind: Record<string, number>; rows: Row[] };
-const KIND: Record<string, string> = { OPENAI: "OpenAI", RULES: "Reglas (0 tokens)", STT: "Transcripción local" };
+const KIND: Record<string, string> = { OPENAI: "OpenAI", RULES: "Reglas (0 tokens)", STT: "Transcripción local", REPLY: "Respuesta del asistente", CONFIRM: "Acción confirmada" };
 const usd = (n: number) => `${n.toFixed(n < 0.01 ? 5 : 3)} US$`;
 const fetcher = (u: string) => fetch(u).then((r) => r.json());
 
@@ -30,7 +30,7 @@ export default function VoiceUsage() {
         <div className="kpi">
           <span>Órdenes resueltas</span>
           <strong>{data.byKind.RULES ?? 0} sin IA</strong>
-          <small>{data.byKind.OPENAI ?? 0} con OpenAI · {data.byKind.STT ?? 0} audios transcritos en local</small>
+          <small>{data.byKind.OPENAI ?? 0} con OpenAI · {data.byKind.STT ?? 0} audios transcritos en local · {data.byKind.CONFIRM ?? 0} acciones confirmadas</small>
         </div>
       </div>
       <div className="table-wrap">
