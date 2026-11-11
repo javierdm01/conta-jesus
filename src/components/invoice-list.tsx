@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Banknote, ChevronRight, Eye, FileDown, Mail, Plus, Printer, Search } from "lucide-react";
+import { Banknote, ChevronRight, Eye, FileDown, Mail, Plus, Printer, Search, Trash2 } from "lucide-react";
 import type { Sale } from "@/lib/workspace-types";
 import { saleDue, saleStatus, saleTotal, type SaleStatus } from "@/lib/sales-view";
 
@@ -15,7 +15,7 @@ export const StatusPill = ({ status }: { status: SaleStatus }) => (
 );
 
 // Barra de acciones sobre una factura: se usa en la lista (sobre la seleccionada) y dentro de la factura.
-export function InvoiceActions({ sale, onNew, onPayment, open = true }: { sale?: Sale; onNew?: () => void; onPayment: (s: Sale) => void; open?: boolean }) {
+export function InvoiceActions({ sale, onNew, onPayment, onDelete, open = true }: { sale?: Sale; onNew?: () => void; onPayment: (s: Sale) => void; onDelete?: (s: Sale) => void; open?: boolean }) {
   const router = useRouter();
   const off = !sale;
   const btn = (label: string, icon: React.ReactNode, onClick: () => void, disabled = off) => (
@@ -37,6 +37,7 @@ export function InvoiceActions({ sale, onNew, onPayment, open = true }: { sale?:
         )}`),
       )}
       {btn("Cobro", <Banknote size={18} />, () => sale && onPayment(sale))}
+      {onDelete && <span className="inv-del">{btn("Eliminar", <Trash2 size={18} />, () => sale && onDelete(sale))}</span>}
     </div>
   );
 }
@@ -51,12 +52,14 @@ export default function InvoiceList({
   title = "Facturas de venta",
   onNew,
   onPayment,
+  onDelete,
 }: {
   sales: Sale[];
   preset?: Filter;
   title?: string;
   onNew: () => void;
   onPayment: (s: Sale) => void;
+  onDelete?: (s: Sale) => void;
 }) {
   const router = useRouter();
   const today = todayIso();
@@ -87,7 +90,7 @@ export default function InvoiceList({
       </nav>
       <div className="list-head">
         <h1>{title}</h1>
-        <InvoiceActions sale={selected} onNew={onNew} onPayment={onPayment} />
+        <InvoiceActions sale={selected} onNew={onNew} onPayment={onPayment} onDelete={onDelete} />
         <label className="list-search">
           <Search size={16} />
           <input type="search" placeholder="Buscar factura, cliente o trabajo" value={q} onChange={(e) => setQ(e.target.value)} />

@@ -316,6 +316,36 @@ export function Dashboard({
     [sort, setSort] = useState("gross");
   const router = useRouter();
   const [documentView, setDocumentView] = useState("all");
+  // Listados en el móvil: cada fila de una tabla se enseña como tarjeta; aquí se copia el título de cada columna a sus celdas.
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const label = () => {
+      document.querySelectorAll<HTMLTableElement>("table:not(.inv-table)").forEach((tb) => {
+        const heads = [...tb.querySelectorAll("thead th")].map((h) => h.textContent?.trim() ?? "");
+        if (!heads.length) return;
+        tb.dataset.cards = "1";
+        tb.querySelectorAll("tbody tr").forEach((tr) => {
+          const cells = [...tr.children] as HTMLElement[];
+          if (cells.length !== heads.length) return;
+          let title = false;
+          cells.forEach((td, i) => {
+            td.dataset.label = heads[i];
+            const isTitle = !title && !!td.textContent?.trim() && !td.querySelector("input[type=checkbox]");
+            if (isTitle) title = true;
+            if (isTitle) td.dataset.title = "1";
+            else delete td.dataset.title;
+          });
+        });
+      });
+    };
+    const mo = new MutationObserver(() => {
+      clearTimeout(t);
+      t = setTimeout(label, 60);
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    label();
+    return () => (mo.disconnect(), clearTimeout(t));
+  }, []);
   const [statusBusy, setStatusBusy] = useState(false);
   const [auditsOpen, setAuditsOpen] = useState(false);
   const [confirmFinish, setConfirmFinish] = useState(false);
@@ -914,6 +944,18 @@ export function Dashboard({
   const setStatus = async (jobId: string, status: string) => {
     setStatusBusy(true);
     try { await run("status", { jobId, status }); } finally { setStatusBusy(false); }
+  };
+  const deleteSale = async (sale: Sale) => {
+    const paid = Number(sale.collected) > 0 ? ` Tiene ${euro(sale.collected)} registrados como cobrados.` : "";
+    if (!window.confirm(`¿Eliminar la factura ${sale.number}? Se borrará con sus líneas y adjuntos vinculados.${paid} No se puede deshacer.`)) return;
+    try {
+      await request("/api/operations/sale-delete", { saleId: sale.id });
+      await load();
+      setToast("Factura eliminada.");
+      if (pathname.startsWith("/facturas-venta/")) router.push("/facturas-venta");
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
   const setJobArchived = async (job: Job, archive: boolean) => {
     if (archive && !window.confirm(`¿Retirar «${job.name}» de la lista? Se conservarán sus facturas, horas, documentos, material y presupuesto. Las reservas de material se mantienen. Podrás recuperarlo desde Retirados.`)) return;
@@ -2497,12 +2539,13 @@ export function Dashboard({
                 documents={s.documents}
                 refresh={load}
                 onPayment={payment}
+                onDelete={deleteSale}
               />
             ) : (
-              <InvoiceList sales={s.sales} onNew={openInvoice} onPayment={payment} />
+              <InvoiceList sales={s.sales} onNew={openInvoice} onPayment={payment} onDelete={deleteSale} />
             ))}
           {section === "cobros" && isAdmin && (
-            <InvoiceList sales={s.sales} preset="pending" title="Cobros" onNew={openInvoice} onPayment={payment} />
+            <InvoiceList sales={s.sales} preset="pending" title="Cobros" onNew={openInvoice} onPayment={payment} onDelete={deleteSale} />
           )}
           {section === "presupuestos" && isAdmin && (pathname.split("/")[2] ? (
             <QuoteDetail

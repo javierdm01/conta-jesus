@@ -8,7 +8,7 @@ import { saleDue, saleStatus, saleTotal } from "@/lib/sales-view";
 import { InvoiceActions, StatusPill, eur, fmt, todayIso } from "./invoice-list";
 
 // Dentro de una factura: todas las acciones arriba, datos, líneas y totales.
-export default function InvoiceDetail({ sale, job, onPayment, documents, refresh }: { sale?: Sale; job?: Job; onPayment: (s: Sale) => void; documents: Doc[]; refresh: () => Promise<void> }) {
+export default function InvoiceDetail({ sale, job, onPayment, onDelete, documents, refresh }: { sale?: Sale; job?: Job; onPayment: (s: Sale) => void; onDelete?: (s: Sale) => void; documents: Doc[]; refresh: () => Promise<void> }) {
   if (!sale)
     return (
       <div className="empty">
@@ -28,7 +28,7 @@ export default function InvoiceDetail({ sale, job, onPayment, documents, refresh
       </nav>
       <div className="list-head">
         <h1>Factura {sale.number}</h1>
-        <InvoiceActions sale={sale} onPayment={onPayment} open={false} />
+        <InvoiceActions sale={sale} onPayment={onPayment} onDelete={onDelete} open={false} />
         <StatusPill status={status} />
       </div>
 

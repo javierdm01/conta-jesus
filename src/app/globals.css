@@ -490,3 +490,30 @@ input[type=range]{padding:0;border:0;box-shadow:none;margin:8px 0}
 @media(max-width:380px){.mod-head small{display:none}}
 .grp-h{display:flex;align-items:center;justify-content:space-between}.grp-h a{display:inline-flex;align-items:center;gap:2px;color:#0f766e;font-size:12px;font-weight:700;letter-spacing:0;text-transform:none;text-decoration:none}
 .create-tile{text-decoration:none}
+
+/* ---------- Listados en el móvil: tarjetas en vez de tablas ---------- */
+.inv-del .inv-act:hover:not(:disabled){background:#fee2e2;color:#b91c1c}.inv-del .inv-act{color:#c2554a}
+@media(max-width:760px){
+  .list-head{gap:10px}
+  .list-head h1{width:100%;font-size:22px}
+  .inv-actions{width:100%;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:4px;scrollbar-width:none}
+  .inv-actions::-webkit-scrollbar{display:none}
+  .inv-act{flex:none;flex-direction:column;justify-content:center;gap:3px;min-width:64px;min-height:58px;padding:0 8px;font-size:11px;background:#fff;border:1px solid #f1ddd0;border-radius:14px}
+  .inv-act:disabled{background:#f6f8f8;border-color:#e8eeee}
+  .list-search{width:100%;min-width:0;margin:0}
+  .expense-filters{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.expense-filters::-webkit-scrollbar{display:none}.expense-filters button{flex:none}
+  .panel:has(table[data-cards]){background:transparent;border:0;box-shadow:none}
+  .table-wrap:has(table[data-cards]){overflow:visible;border:0;background:transparent}
+  table[data-cards],table[data-cards] tbody{display:block;width:100%;min-width:0}
+  table[data-cards] thead{display:none}
+  table[data-cards] tr{position:relative;display:flex;flex-direction:column;gap:3px;margin:0 0 10px;padding:13px 16px;background:#fff;border:1px solid #e6edeb;border-radius:16px;box-shadow:0 1px 3px #1f3d3410}
+  table[data-cards] tr.sel{border-color:#0f766e;background:#f0f8f6}
+  table[data-cards] td{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:0;border:0;background:transparent;text-align:right;font-size:14px;white-space:normal;min-width:0}
+  table[data-cards] td::before{content:attr(data-label);flex:none;color:#7a8b86;font-size:12px;text-align:left}
+  table[data-cards] td[data-label=""]::before,table[data-cards] td[data-title]::before{display:none}
+  table[data-cards] td[data-title]{justify-content:flex-start;margin:0 0 4px;font-size:16px;font-weight:700;text-align:left;padding-right:34px}
+  table[data-cards] td:empty{display:none}
+  table[data-cards] td:has(input[type=checkbox]){position:absolute;top:12px;right:14px;width:auto}
+  table[data-cards] td:last-child:not([data-title]):not(:has(input)){margin-top:2px}
+  table[data-cards] td .st-pill,table[data-cards] td .pill{flex:none}
+}

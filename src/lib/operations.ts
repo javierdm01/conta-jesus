@@ -402,6 +402,19 @@ export async function operate(u: Actor, action: string, input: unknown) {
       return row;
     });
   }
+  if (action === "sale-delete") {
+    admin(u);
+    const { saleId } = z.object({ saleId: v.id }).parse(input);
+    return serial(async (tx) => {
+      const sale = await tx.sale.findFirst({ where: { id: saleId, companyId }, select: { id: true, number: true, documentId: true } });
+      if (!sale) throw new AppError("Factura no encontrada.", 404);
+      // Sus líneas y vínculos a adjuntos se borran con ella; el PDF original, si lo hay, vuelve a revisión.
+      if (sale.documentId) await tx.document.update({ where: { id: sale.documentId }, data: { status: "REVIEW", confirmedAt: null } });
+      await tx.sale.delete({ where: { id: sale.id } });
+      await audit(tx, u, `Eliminar factura ${sale.number}`, sale.id);
+      return { id: sale.id };
+    });
+  }
   if (action === "home-layout") {
     const item = z.object({ id: z.string().max(60), wide: z.boolean(), title: z.string().max(80).optional(), text: z.string().max(2000).optional(), links: z.array(z.string().max(40)).max(20).optional() });
     const { items } = z.object({ items: z.array(item).max(40) }).parse(input);
