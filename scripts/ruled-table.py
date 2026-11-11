@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, ROUND_HALF_UP
 import cv2
 import numpy as np
@@ -33,8 +34,39 @@ def tess(gray, psm='7', whitelist=None, lang='eng', scale=4):
         args = [TESS, path, 'stdout', '-l', lang, '--psm', psm]
         if whitelist:
             args += ['-c', 'tessedit_char_whitelist=' + whitelist]
-        out = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60).stdout or ''
+        out = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60, env={**os.environ, 'OMP_THREAD_LIMIT': '1'}).stdout or ''
     return ' '.join(out.split())
+
+
+def tess_conf(gray, whitelist=None, lang='eng', scale=4):
+    """Texto de una celda y confianza media (0-100) de Tesseract."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'c.png')
+        big = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        big = cv2.copyMakeBorder(big, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+        cv2.imwrite(path, big)
+        args = [TESS, path, 'stdout', '-l', lang, '--psm', '7']
+        if whitelist:
+            args += ['-c', 'tessedit_char_whitelist=' + whitelist]
+        out = subprocess.run(args + ['tsv'], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60, env={**os.environ, 'OMP_THREAD_LIMIT': '1'}).stdout or ''
+    words, total, weight = [], 0.0, 0
+    for line in out.splitlines()[1:]:
+        c = line.split('	')
+        if len(c) >= 12 and c[0] == '5' and c[11].strip():
+            words.append(c[11].strip())
+            total += float(c[10]) * len(c[11])
+            weight += len(c[11])
+    return ' '.join(words), (total / weight if weight else 0.0)
+
+
+def best_read(crop, whitelist=None, lang='eng', fast=False):
+    """La lectura de más confianza en gris y en blanco/negro (solo en gris si hay muchas filas)."""
+    best = ('', 0.0)
+    for variant in ((crop,) if fast else (crop, cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1])):
+        text, conf = tess_conf(variant, whitelist, lang, 4)
+        if text and conf > best[1]:
+            best = (text, conf)
+    return best
 
 
 def slice_minima(gray, y0, y1):
@@ -212,17 +244,16 @@ def ink_crop(crop):
     return crop[max(0, ys.min() - 2):ys.max() + 3, max(0, xs.min() - 2):xs.max() + 3]
 
 
-def reads(crop, column):
-    """Varias lecturas de la misma celda (grises y blanco/negro, a dos escalas)."""
+def reads(crop, column, fast=False):
+    """Lecturas de la misma celda: en gris y en blanco/negro (solo en gris si hay muchas filas). Cada lectura es un proceso de Tesseract."""
     out = []
-    for variant in (crop, cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]):
-        for scale in (4, 6):
-            if column in NUMERIC:
-                out.append(tess(ink_crop(variant), '7', '0123456789.,', 'eng', scale))
-            elif column == 'code':
-                out.append(tess(variant, '7', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._/', 'eng', scale))
-            else:
-                out.append(tess(variant, '7', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-. ', 'eng', scale))
+    for variant in ((crop,) if fast else (crop, cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1])):
+        if column in NUMERIC:
+            out.append(tess(ink_crop(variant), '7', '0123456789.,', 'eng', 5))
+        elif column == 'code':
+            out.append(tess(variant, '7', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._/', 'eng', 4))
+        else:
+            out.append(tess(variant, '7', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-. ', 'eng', 4))
     return [r for r in out if r]
 
 
@@ -230,46 +261,52 @@ def vote(got):
     return max(got, key=lambda r: (got.count(r), len(r))) if got else ''
 
 
-def read_cell(gray, box, column):
+def read_cell(gray, box, column, fast=False):
     x0, y0, x1, y1 = [int(v) for v in box]
     crop = gray[max(0, y0 - 2):y1 + 3, max(0, x0 + 6):max(x0 + 7, x1 - 4)]
     if crop.size == 0:
         return ''
     if column == 'brand':
-        return vote(reads(crop, column))
+        return vote(reads(crop, column, fast))
     if column == 'code':
         got = reads(crop, column)
         good = [r for r in got if re.match(r'^[A-Z0-9][A-Z0-9._/-]{3,14}$', r) and re.search(r'\d', r)]
         return vote(good or got)
-    return tess(crop, '7', None, 'spa+eng', 3)
+    return best_read(crop, None, 'spa+eng', fast)[0]
 
 
 NICE_DISCOUNTS = [Decimal(x) for x in range(0, 71, 5)]
 
 
 def candidates(raws, column):
-    """Valores posibles de una celda numérica: lo leído (cuantas más veces, más peso) y correcciones típicas del ruido de borde."""
+    """Valores posibles de una celda numérica. Los descuentos (múltiplos de 0,5) y las cantidades (múltiplos de 0,5) solo admiten valores redondos: un 60,01 es ruido de borde."""
     weight = {}
 
     def add(value, w):
         if value is not None and value >= 0:
             weight[value] = weight.get(value, 0) + w
 
+    def snap(v, tolerance):
+        near = (v * 2).quantize(Decimal('1')) / 2
+        return near if abs(near - v) <= tolerance else None
+
     for raw in raws:
         v = to_number(raw, DECIMALS[column])
-        add(v, 1.0)
         if v is None:
             continue
         if column in ('dto1', 'dto2'):
+            add(snap(v, Decimal('0.3')), 1.0)
             near = min(NICE_DISCOUNTS, key=lambda d: abs(d - v))
             if abs(near - v) <= 5:
-                add(near, .45)
+                add(near, .4)
         elif column == 'raee':
-            add(Decimal('0.00'), .3)
+            add(Decimal('0.00'), 1.0)
         elif column == 'quantity':
-            add((v * 2).quantize(Decimal('1')) / 2, .4)
-        elif column == 'price':
-            add(v.quantize(Decimal('0.01')).quantize(Decimal('0.001')), .3)  # una cifra de más pegada al borde
+            add(snap(v, Decimal('0.06')), 1.0)
+        else:
+            add(v, 1.0)
+            if column == 'price':
+                add(v.quantize(Decimal('0.01')).quantize(Decimal('0.001')), .3)  # una cifra de más pegada al borde
     return sorted(weight.items(), key=lambda kv: -kv[1])[:6]
 
 
@@ -287,7 +324,7 @@ def row_options(cands, limit=6):
     return found[:limit]
 
 
-def read_row(gray, thin, band, rules):
+def read_row(gray, thin, band, rules, fast=False):
     """Lee una fila (celda a celda). Devuelve celdas, valores elegidos, cómo se validó ('ok', 'repaired:<celda>' o '') y alternativas."""
     yc = (band[0] + band[1]) / 2
     edges = [x_at(r, yc) for r in rules]
@@ -297,17 +334,18 @@ def read_row(gray, thin, band, rules):
         if c in NUMERIC:
             x0, y0, x1, y1 = [int(v) for v in boxes[c]]
             crop = gray[max(0, y0 - 2):y1 + 3, max(0, x0 + 6):max(x0 + 7, x1 - 4)]
-            raws[c] = reads(crop, c) if crop.size else []
+            # la tasa RAEE casi siempre es 0,00 y no entra en la cuenta: una sola lectura; con muchas filas, lecturas rápidas
+            raws[c] = (reads(crop, c, fast or c in ('raee', 'dto2'))) if crop.size else []
             cells[c] = vote(raws[c])
         elif c == 'code':
             # el código empieza pegado a la regla: máscara fina y sin recortar su primera cifra
             x0, y0, x1, y1 = [int(v) for v in boxes[c]]
             crop = thin[max(0, y0 - 2):y1 + 3, max(0, x0 + 3):max(x0 + 4, x1 - 3)]
-            got = reads(crop, 'code') if crop.size else []
-            good = [r for r in got if re.match(r'^[A-Z0-9][A-Z0-9._/-]{3,14}$', r) and re.search(r'\d', r)]
-            cells[c] = vote(good or got)
+            text, conf = best_read(crop, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._/', 'eng', fast) if crop.size else ('', 0.0)
+            text = text.replace(' ', '')
+            cells[c] = text if conf >= 70 and re.match(r'^[A-Z0-9][A-Z0-9._/-]{3,14}$', text) and re.search(r'\d', text) else ''
         else:
-            cells[c] = read_cell(gray, boxes[c], c)
+            cells[c] = read_cell(gray, boxes[c], c, fast)
     cands = {c: candidates(raws[c], c) for c in NUMERIC}
     options = row_options(cands) if all(cands[c] for c in ('quantity', 'price', 'dto1', 'dto2', 'total')) else []
     values = {c: (cands[c][0][0] if cands[c] else None) for c in NUMERIC}
@@ -343,9 +381,14 @@ def main():
     num_bands = [b for b in text_bands(ink, rules, top, bottom, 3, 9) if b[0] > top + h * .012]  # sin la cabecera
     desc_bands = text_bands(ink, rules, top, bottom, 2, 3)
     rows, notes = [], []
-    for band in num_bands:
-        cells, values, how, alts = read_row(clean, thin, band, rules)
-        if sum(1 for c in NUMERIC if re.search(r'\d', cells[c] or '')) < 3:
+    fast = len(num_bands) > 14
+    # Las filas son independientes: se leen a la vez (cada lectura es un proceso de Tesseract).
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda band: read_row(clean, thin, band, rules, fast), num_bands))
+    for band, (cells, values, how, alts) in zip(num_bands, results):
+        if sum(1 for c in NUMERIC if re.search(r'\d', cells[c] or '')) < 3 or re.search(r'rogamos|importante|portes|oferta por si', cells['description'], re.I):
+            continue
+        if values.get('quantity') is None or values['quantity'] <= 0:
             continue
         rows.append({'cells': cells, 'how': how, 'values': {k: (str(v) if v is not None else None) for k, v in values.items()}, 'band': list(band), 'extra': [], 'alternatives': alts})
     # Texto de descripción sin números: entre dos filas completa la descripción; tras la última fila es una nota del proveedor.

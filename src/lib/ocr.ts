@@ -1,7 +1,7 @@
 import { lineNet, documentLineNet, dec, sum, cents } from "./money";
 import { matchSupplier, type SupplierCandidate } from "./supplier-match";
 import type { Evidence } from "./ocr-evidence";
-import { gridFrom, gridIdentity, gridLines } from "./ocr-grid";
+import { gridFrom, gridIdentity, gridLines, repairByBase } from "./ocr-grid";
 
 // Proveedores conocidos con maquetación propia: su nombre y NIF salen de la cabecera aunque el OCR los lea mal
 // (el documento lleva también el NIF del cliente, que no debe confundirse con el del proveedor).
@@ -433,7 +433,9 @@ export function parseOcr(
   let columns: string[] | undefined;
   let invoiceTable = false,
     tableDiscounts = 0,
-    unpricedTable = false;
+    unpricedTable = false,
+    raeeColumn = false,
+    brandColumn = false;
   let activeLine: number | undefined;
   // Solo reconocer filas con cantidad, unidad, precio, descuento e importe explícitos.
   // No se infieren longitudes, tamaños de paquete, referencias ni precios omitidos.
@@ -482,6 +484,8 @@ export function parseOcr(
       tableDiscounts = [...row.matchAll(/(?:dto|dcto|descuento)\s*[123z]?/gi)]
         .length;
       unpricedTable = !/importe|total/i.test(row);
+      raeeColumn = /raee/i.test(row); // «T. RAEE» va antes de la cantidad y no es parte de la descripción
+      brandColumn = /\bmarca\b/i.test(row);
       continue;
     }
     if (/base\s*imponible|imp\.?\s*bruto|forma de pago|vencimientos|PRODUCTOR|INFORMACI[OÓ]N DE ENTREGA/i.test(row))
@@ -505,6 +509,7 @@ export function parseOcr(
         const tail = tokens.slice(-count),
           values = tail.map((m) => numeric(m[1]));
         let prefix = plain.slice(0, tail[0].index).trim();
+        if (raeeColumn) prefix = prefix.replace(/\s+\d[\d.,]*$/, "");
         // Eliminar marcas aisladas del margen, conservando códigos numéricos y alfanuméricos.
         const pieces = prefix
           .split(/ {2,}/)
@@ -519,6 +524,16 @@ export function parseOcr(
           prefix = pieces.slice(referenceIndex + 1).join(" ");
         }
         prefix = prefix.replace(/^\*\)\s*/, "(*) ");
+        // Con columna «Marca», la primera palabra en mayúsculas (tras el código) es la marca y no se toma como referencia.
+        let brand = "";
+        if (brandColumn) {
+          const b = prefix.match(/^([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9.&-]{2,19})\s+(\S.{2,})$/);
+          if (b && !/^(?:TOMA|BASE|CABLE|CINTA|TUBO|CAJA|CLAVIJA|TERMINAL|REGLETA|FUENTE)$/.test(b[1])) {
+            brand = b[1];
+            prefix = b[2];
+            if (reference && reference.toUpperCase() === brand) reference = "";
+          }
+        }
         const [quantity, price] = values,
           total = values.at(-1);
         const discounts = values.slice(2, -1);
@@ -564,6 +579,7 @@ export function parseOcr(
                 discount,
                 family: productFamily(prefix),
                 financial,
+                ...(brand ? { brand } : {}),
               });
               activeLine = result.lines.length - 1;
               if (
@@ -682,7 +698,11 @@ export function parseOcr(
         ...g.warnings,
       );
     }
-    for (const note of grid.notes.map((n) => n.replace(/\s+/g, " ").trim()).filter((n) => /[A-Za-zÁÉÍÓÚÑáéíóúñ]{3}/.test(n)))
+    // Notas del proveedor: texto con sentido bajo la última línea (no el pie impreso de la tabla ni ruido de lectura).
+    const letters = (n: string) => (n.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g)?.length ?? 0) / Math.max(1, n.replace(/\s/g, "").length);
+    for (const note of grid.notes
+      .map((n) => n.replace(/\s+/g, " ").trim())
+      .filter((n) => n.length >= 8 && letters(n) >= 0.75 && !/rogamos|oferta por si|importante|portes|dto\.?\s*p\.?p|raee|base imponible/i.test(n)))
       result.warnings.push(`Nota del proveedor en el documento: ${note}`);
     if (grid.rows.some((r) => Number(r.values.raee) > 0))
       result.warnings.push("Alguna línea lleva tasa RAEE: comprueba si el importe de la línea la incluye.");
@@ -697,6 +717,14 @@ export function parseOcr(
         if (result.date) result.warnings.push(`Fecha corregida con la lectura de la cabecera (${result.date} → ${value}): confírmala.`);
         result.date = value;
       }
+    }
+  }
+  // Una cifra mal leída en un precio puede cuadrar con su propio importe y descuadrar la base: se intenta corregir con la base impresa.
+  if (result.net && result.lines.length && result.lines.every((l) => l.price !== "")) {
+    const fix = repairByBase(result.lines, result.net);
+    if (fix) {
+      result.lines = fix.lines;
+      result.warnings.push(fix.warning);
     }
   }
   if (

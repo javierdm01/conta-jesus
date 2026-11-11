@@ -70,3 +70,44 @@ test("una fila sin combinación que cuadre se conserva sin precio y avisa", () =
   assert.ok(s.warnings.some((w) => w.startsWith("Importes sin conciliar")));
   assert.ok(s.warnings.some((w) => w.includes("no se ha podido comprobar")));
 });
+
+import { repairByBase } from "../src/lib/ocr-grid";
+test("la base del documento corrige un precio con una cifra mal leída", () => {
+  // Extractor NOVOVENT: se leyó 29,072 (impreso 29,572); la línea cuadra sola (58,14) pero la base impresa es 59,14.
+  const line = { description: "Extractor doméstico MUTE 100T", quantity: "2.00", price: "29.072", discount: "0" };
+  const fix = repairByBase([line], "59.14");
+  assert.equal(fix?.lines[0].price, "29.572");
+  assert.match(fix!.warning, /29\.072 a 29\.572/);
+  // Si ya suman la base, o si la corrección no se parece a lo leído, no se toca nada.
+  assert.equal(repairByBase([{ ...line, price: "29.572" }], "59.14"), null);
+  assert.equal(repairByBase([line], "300.00"), null);
+});
+test("con varias líneas no se corrige si varias podrían explicar la diferencia", () => {
+  const a = { description: "A", quantity: "10.00", price: "0.700", discount: "0" }; // 7,00
+  const b = { description: "B", quantity: "10.00", price: "1.070", discount: "0" }; // 10,70
+  const bad = { description: "C", quantity: "2.00", price: "3.370", discount: "0" }; // 6,74 (impreso 3,379 → 6,76)
+  // Una diferencia de 0,02 € la absorbería cualquiera de las tres líneas con un retoque mínimo: no se adivina.
+  assert.equal(repairByBase([a, b, bad], "24.46"), null);
+  // Una diferencia de 1,00 € solo la explica un fallo claro en una línea.
+  const big = { description: "D", quantity: "2.00", price: "29.072", discount: "0" };
+  assert.equal(repairByBase([a, b, big], "76.84")?.lines[2].price, "29.572");
+});
+
+test("tabla con T.RAEE y Marca por texto: la tasa y la marca no se mezclan con la descripción", () => {
+  const s = parseOcr(
+    [
+      "OFERTA DE VENTA REFERENCIA CLIENTE FECHA",
+      "6109095 00 01389 04/11/2026",
+      "Código Marca Descripción T. RAEE(*) Cantidad Precio Dto Dto Importe",
+      "NOVOVENT  Extractor doméstico MUTE 100T  0,50  2,00  29,572  0,00  0,00  59,14",
+      "Base imponible 59,14",
+    ].join("\n"),
+    [],
+    "PURCHASE",
+  );
+  assert.equal(s.lines.length, 1);
+  assert.equal(s.lines[0].description, "Extractor doméstico MUTE 100T");
+  assert.equal(s.lines[0].brand, "NOVOVENT");
+  assert.equal(s.lines[0].price, "29.572");
+  assert.equal(s.number, "6109095");
+});
