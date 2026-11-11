@@ -19,7 +19,7 @@ const fetcher = async (url: string) => {
 };
 
 // Buscador de la base de conocimiento de materiales. Cada pulsación añade el artículo (otra pulsación suma una unidad).
-function CatalogPicker({ onAdd, close }: { onAdd: (i: Item) => void; close: () => void }) {
+export function CatalogPicker({ onAdd, close }: { onAdd: (i: Item) => void; close: () => void }) {
   const [query, setQuery] = useState(""),
     [term, setTerm] = useState(""),
     [added, setAdded] = useState(0);

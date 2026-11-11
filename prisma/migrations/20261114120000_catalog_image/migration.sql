@@ -1,0 +1,1 @@
+ALTER TABLE "CatalogItem" ADD COLUMN "imageUrl" TEXT NOT NULL DEFAULT '';

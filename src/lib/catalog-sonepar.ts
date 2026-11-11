@@ -7,6 +7,7 @@ type Product = {
   nombre?: string | null;
   precios_mostrados?: string[];
   unidad_precio?: string | null;
+  imagen_url?: string | null;
 };
 
 /**
@@ -14,7 +15,7 @@ type Product = {
  * si no hay precio se importa a 0 para completarlo después. Los portes no son un material y se saltan.
  */
 export function parseSoneparJson(text: string) {
-  const data = JSON.parse(text) as { productos?: Product[] };
+  const data = JSON.parse(text) as { productos?: Product[]; fecha_extraccion?: string };
   if (!Array.isArray(data.productos)) throw Error("El archivo no tiene la lista «productos».");
   const items: CatalogRow[] = [];
   let skipped = 0,
@@ -40,6 +41,10 @@ export function parseSoneparJson(text: string) {
       price: price ?? "0",
       supplier: "Sonepar",
       supplierRef: sonepar.slice(0, 80),
+      // Sin foto Sonepar devuelve un SVG genérico: se descarta.
+      imageUrl: /^https:\/\//.test(p.imagen_url ?? "") && !/image-default/.test(p.imagen_url!) ? p.imagen_url!.slice(0, 500) : "",
+      // El último precio mostrado es el neto por unidad (o por metro) de ese día: el precio actual en Sonepar.
+      ...(price !== null && /^\d{4}-\d{2}-\d{2}$/.test(data.fecha_extraccion ?? "") ? { currentPrice: price, currentPriceAt: data.fecha_extraccion } : {}),
     });
   }
   return { items, skipped, withoutPrice };

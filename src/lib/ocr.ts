@@ -503,7 +503,23 @@ export function parseOcr(
         }
       }
       const tokens = [...plain.matchAll(/(?<!\S)(-?\d[\d.,]*)(?=\s|$)/g)];
-      const count = 3 + tableDiscounts;
+      // La columna de descuento puede estar vacía en una fila (el OCR no deja hueco): se prueba con todos los descuentos
+      // de la cabecera y, si no cuadra, con menos; gana el primer número de columnas cuyo importe concilia.
+      let count = 3 + tableDiscounts;
+      for (let k = tableDiscounts; k >= 0 && tableDiscounts > 0; k--) {
+        const t = tokens.slice(-(3 + k));
+        if (t.length < 3 + k) continue;
+        const v = t.map((m) => numeric(m[1])),
+          ds = v.slice(2, -1);
+        if (!v[0] || !v[1] || !v.at(-1) || !ds.every((d) => d !== undefined && dec(d).gte(0) && dec(d).lte(100))) continue;
+        const f = ds.reduce((x, d) => x.mul(dec(1).minus(dec(d!).div(100))), dec(1));
+        try {
+          if (documentLineNet(v[0], v[1], dec(1).minus(f).mul(100).toDecimalPlaces(4).toString()) === cents(v.at(-1)!)) {
+            count = 3 + k;
+            break;
+          }
+        } catch {}
+      }
       if (tokens.length >= count) {
         activeLine = undefined;
         const tail = tokens.slice(-count),

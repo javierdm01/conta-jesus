@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     const start = pageSize ? (page - 1) * pageSize : 0;
     return Response.json(
       {
-        items: found.slice(start, start + (pageSize || limit)).map((r) => ({ ...r, price: r.price.toString() })),
+        items: found.slice(start, start + (pageSize || limit)).map((r) => ({ ...r, price: r.price.toString(), currentPrice: r.currentPrice?.toString() ?? null })),
         total: found.length,
         all: rows.length,
         noPrice: rows.filter((r) => r.price.lte(0)).length,

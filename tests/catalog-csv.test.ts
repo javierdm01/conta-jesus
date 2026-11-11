@@ -24,3 +24,16 @@ test("parseCatalogCsv lee el CSV de Excel con ; y comillas", () => {
 test("parseCatalogCsv avisa si faltan columnas", () => {
   assert.match(parseCatalogCsv("a;b\n1;2").errors[0], /Faltan columnas/);
 });
+
+test("reconoce el CSV que exporta el propio catálogo (cabeceras largas, con acentos y paréntesis)", async () => {
+  const { parseCatalogCsv } = await import("../src/lib/catalog-csv");
+  const csv = [
+    "Referencia;Ref. proveedor;Descripción;Marca;Proveedor;Unidad;Precio unitario (€, sin IVA);Origen del precio;Precio de tarifa del catálogo (€)",
+    "75432-39;17643;Base enchufe SIMON 75;SIMON;Sonepar;ud;3,45;Último precio pagado;3,59",
+    "X1;99;Sin precio;;Sonepar;ud;;Sin precio;",
+  ].join("\r\n");
+  const r = parseCatalogCsv(`\uFEFF${csv}`);
+  assert.equal(r.items.length, 1);
+  assert.deepEqual(r.items[0], { reference: "75432-39", description: "Base enchufe SIMON 75", brand: "SIMON", unit: "ud", price: "3.45", supplier: "Sonepar", supplierRef: "17643" });
+  assert.equal(r.errors.length, 1);
+});

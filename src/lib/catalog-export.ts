@@ -1,7 +1,11 @@
 // CSV del catálogo de materiales con su último precio unitario pagado y el enlace a la factura o albarán donde está.
 import { db } from "./db";
+import { parseOcr } from "./ocr";
+import { soneparSearchUrl, variation } from "./catalog-links";
+export { soneparSearchUrl, variation };
 
-export type ExportItem = { reference: string; supplierRef: string; description: string; brand: string; unit: string; supplier: string; price: number };
+export type ExportItem = { reference: string; supplierRef: string; description: string; brand: string; unit: string; supplier: string; price: number; currentPrice?: number | null; currentPriceAt?: Date | null; imageUrl?: string };
+
 export type ExportLine = {
   reference: string;
   description: string;
@@ -10,6 +14,10 @@ export type ExportLine = {
   price: number | null; // precio de lista por unidad, antes de descuentos
   discount: number;
   net: number | null; // importe de la línea con descuentos
+  /** Otras referencias de la misma fila (código de Sonepar y referencia de fabricante), leídas de nuevo del texto del documento. */
+  altRefs?: string[];
+  id?: string;
+  job?: { id: string; name: string } | null;
   documentId: string;
   kind: string;
   number: string;
@@ -23,6 +31,11 @@ export const refKey = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "").r
 const STOP = new Set(["DE", "DEL", "LA", "EL", "LOS", "LAS", "CON", "PARA", "POR", "Y", "EN", "A", "UN", "UNA"]);
 const words = (s: string) =>
   s.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length >= 2 && !STOP.has(w));
+/** ¿La línea de factura puede ser este artículo? Con una referencia en común basta una palabra parecida en la descripción; si no comparten ninguna, la referencia está mal asignada en la factura. */
+export const plausible = (itemDescription: string, lineDescription: string) => {
+  const line = words(lineDescription).filter((w) => w.length >= 3 && !/^\d+$/.test(w));
+  return !line.length || likeness(line, words(itemDescription)).hit >= 1;
+};
 /** Parecido de una línea de factura (abreviada) con la descripción de un artículo: palabras iguales o abreviaturas («MOD» ≈ «MODULOS»). */
 function likeness(line: string[], item: string[]) {
   const pool = [...item];
@@ -57,20 +70,28 @@ export type ExportRow = {
   documents: ExportLine[];
   how: string;
   notes: string[];
+  /** Precio actual en Sonepar frente al último pagado (solo si se ha comprado). */
+  change: number | null;
 };
 
 export function buildRows(items: ExportItem[], lines: ExportLine[]): ExportRow[] {
   const byRef = new Map<string, ExportLine[]>();
-  for (const l of lines) {
-    const k = refKey(l.reference);
-    if (k) byRef.set(k, [...(byRef.get(k) ?? []), l]);
-  }
+  // Una línea es de este artículo si coinciden las DOS referencias (código del proveedor y de fabricante), o si coincide una y la descripción se parece.
+  const accept = (it: ExportItem, l: ExportLine) => {
+    const own = keysOf(l);
+    const a = refKey(it.reference), b = refKey(it.supplierRef);
+    return (a && b && own.includes(a) && own.includes(b)) || plausible(it.description, l.description);
+  };
+  const keysOf = (l: ExportLine) => [...new Set([l.reference, ...(l.altRefs ?? [])].map(refKey).filter(Boolean))];
+  for (const l of lines) for (const k of keysOf(l)) byRef.set(k, [...(byRef.get(k) ?? []), l]);
   // Líneas SIN referencia: se asocian por el parecido de su descripción con un artículo (y solo si es claramente el mejor).
   const itemWords = items.map((it) => words(it.description));
   const byDescription = new Map<number, ExportLine[]>();
-  const hasRef = (it: ExportItem) => [refKey(it.reference), refKey(it.supplierRef)].some((k) => k && byRef.has(k));
+  const hasRef = (it: ExportItem) => [refKey(it.reference), refKey(it.supplierRef)].some((k) => k && (byRef.get(k) ?? []).some((l) => accept(it, l)));
+  const claimed = (l: ExportLine) =>
+    items.some((it) => keysOf(l).some((k) => [refKey(it.reference), refKey(it.supplierRef)].includes(k)) && accept(it, l));
   for (const l of lines) {
-    if (refKey(l.reference)) continue;
+    if (keysOf(l).length && claimed(l)) continue;
     const w = words(l.description);
     const scored = items
       .map((it, i) => ({ i, ...likeness(w, itemWords[i]) }))
@@ -79,6 +100,7 @@ export function buildRows(items: ExportItem[], lines: ExportLine[]): ExportRow[]
     if (scored[0] && (!scored[1] || scored[0].score - scored[1].score >= 0.1)) byDescription.set(scored[0].i, [...(byDescription.get(scored[0].i) ?? []), l]);
   }
 
+  const rejected = new Map<number, number>();
   return items.map((item, index) => {
     const keys = [refKey(item.reference), refKey(item.supplierRef)].filter(Boolean);
     let matched: ExportLine[] = [];
@@ -86,7 +108,9 @@ export function buildRows(items: ExportItem[], lines: ExportLine[]): ExportRow[]
     if (keys.length) {
       const viaRef = refKey(item.reference) ? byRef.get(refKey(item.reference)) ?? [] : [];
       const viaSup = refKey(item.supplierRef) ? byRef.get(refKey(item.supplierRef)) ?? [] : [];
-      matched = [...new Set([...viaRef, ...viaSup])];
+      const candidates = [...new Set([...viaRef, ...viaSup])];
+      matched = candidates.filter((l) => accept(item, l));
+      if (candidates.length > matched.length) rejected.set(index, candidates.length - matched.length);
       if (matched.length) how = viaRef.length && viaSup.length ? "referencia y ref. proveedor" : viaRef.length ? "referencia" : "ref. proveedor";
     }
     if (!matched.length && byDescription.has(index)) {
@@ -107,6 +131,7 @@ export function buildRows(items: ExportItem[], lines: ExportLine[]): ExportRow[]
     }
     for (const l of paid.slice(0, 1))
       if (l.net !== null && l.price !== null && Math.abs(l.net - l.quantity * l.price * (1 - l.discount / 100)) > 0.02) notes.push("El importe de la línea no cuadra con cantidad × precio × descuento: revisa la factura");
+    if (rejected.has(index)) notes.push(`${rejected.get(index)} línea(s) con esta referencia descartadas: su descripción no corresponde al artículo (referencia mal asignada en la factura)`);
     if (!last && item.price <= 0) notes.push("Sin precio: ni tarifa ni compras");
     if (!last && documents.length) notes.push("Aparece solo en abonos o líneas sin precio");
     return {
@@ -121,6 +146,7 @@ export function buildRows(items: ExportItem[], lines: ExportLine[]): ExportRow[]
       documents,
       how,
       notes,
+      change: last ? variation(unitNet(last), item.currentPrice) : null,
     };
   });
 }
@@ -137,6 +163,7 @@ export const HEADERS = [
   "Precio unitario (€, sin IVA)", "Origen del precio", "Fecha del último precio", "Precio de tarifa del catálogo (€)",
   "Precio de lista en la factura (€)", "Descuento (%)", "Mínimo pagado (€)", "Máximo pagado (€)", "Nº de compras",
   "Documento del último precio", "Enlace al documento", "Otros documentos donde aparece", "Cómo se asoció", "Avisos de revisión",
+  "Precio actual en Sonepar (€)", "Fecha del precio actual", "Variación sobre lo pagado (%)", "Buscar en Sonepar",
 ];
 
 /** CSV para Excel en español: UTF-8 con BOM, separador «;» y decimales con coma. */
@@ -156,35 +183,54 @@ export function toCsv(rows: ExportRow[], origin: string) {
         .map((l) => `${label(l)} (${day(l.date)}) ${link(l)}`)
         .join(" | "),
       r.how, r.notes.join(" · "),
+      money(r.item.currentPrice ?? null), day(r.item.currentPriceAt ?? null), r.change === null ? "" : String(r.change).replace(".", ","), soneparSearchUrl(r.item),
     ].map(cell).join(";"),
   );
   return `﻿${[HEADERS.map(cell).join(";"), ...out].join("\r\n")}\r\n`;
 }
 
+const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+/**
+ * Líneas de los documentos confirmados con sus referencias REALES: el texto de cada documento se vuelve a leer y cada línea
+ * guardada se empareja con su fila (descripción y cantidad). Así valen aunque la referencia guardada esté en la fila de al lado.
+ */
+export async function loadExportLines(companyId: string): Promise<ExportLine[]> {
+  const docs = await db.document.findMany({
+    where: { companyId, kind: { in: ["PURCHASE", "DELIVERY", "CREDIT"] }, status: "CONFIRMED" },
+    include: { lines: true, supplier: { select: { name: true } }, job: { select: { id: true, name: true } } },
+  });
+  return docs.flatMap((d) => {
+    const parsed = parseOcr(d.text ?? "", [], d.kind).lines as { reference: string; model?: string; description: string; quantity: string; price: string }[];
+    return d.lines.map((l) => {
+      const same = parsed.filter((p) => norm(p.description).slice(0, 18) === norm(l.description).slice(0, 18) && Number(p.quantity) === Number(l.quantity));
+      const hit = same.length === 1 ? same[0] : same.find((p) => Number(p.price) === Number(l.price));
+      return {
+        // Con la fila releída se usan sus referencias; si no hay forma de emparejarla, la guardada.
+        reference: hit ? hit.reference || hit.model || "" : l.reference ?? "",
+        altRefs: hit ? [hit.model ?? ""].filter(Boolean) : [],
+        id: l.id,
+        job: d.job,
+        description: l.description,
+        quantity: Number(l.quantity),
+        unit: l.unit,
+        price: l.price === null ? null : Number(l.price),
+        discount: Number(l.discount),
+        net: l.net === null ? null : Number(l.net),
+        documentId: d.id,
+        kind: d.kind,
+        number: d.number ?? "",
+        date: d.date ?? new Date(0),
+        supplier: d.supplier?.name ?? "",
+      };
+    });
+  });
+}
+
 export async function catalogCsv(companyId: string, origin: string) {
-  const [items, lines] = await Promise.all([
-    db.catalogItem.findMany({ where: { companyId }, orderBy: { description: "asc" } }),
-    db.documentLine.findMany({
-      where: { document: { companyId, kind: { in: ["PURCHASE", "DELIVERY", "CREDIT"] }, status: "CONFIRMED" } },
-      include: { document: { select: { id: true, kind: true, number: true, date: true, supplier: { select: { name: true } } } } },
-    }),
-  ]);
+  const [items, lines] = await Promise.all([db.catalogItem.findMany({ where: { companyId }, orderBy: { description: "asc" } }), loadExportLines(companyId)]);
   const rows = buildRows(
-    items.map((i) => ({ reference: i.reference, supplierRef: i.supplierRef, description: i.description, brand: i.brand, unit: i.unit, supplier: i.supplier, price: Number(i.price) })),
-    lines.map((l) => ({
-      reference: l.reference ?? "",
-      description: l.description,
-      quantity: Number(l.quantity),
-      unit: l.unit,
-      price: l.price === null ? null : Number(l.price),
-      discount: Number(l.discount),
-      net: l.net === null ? null : Number(l.net),
-      documentId: l.document.id,
-      kind: l.document.kind,
-      number: l.document.number ?? "",
-      date: l.document.date ?? new Date(0),
-      supplier: l.document.supplier?.name ?? "",
-    })),
+    items.map((i) => ({ reference: i.reference, supplierRef: i.supplierRef, description: i.description, brand: i.brand, unit: i.unit, supplier: i.supplier, price: Number(i.price), currentPrice: i.currentPrice === null ? null : Number(i.currentPrice), currentPriceAt: i.currentPriceAt })),
+    lines,
   );
   return { csv: toCsv(rows, origin), rows };
 }

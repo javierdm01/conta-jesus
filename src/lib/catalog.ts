@@ -4,7 +4,9 @@ import { admin, AppError, type Actor } from "./access";
 import * as v from "./validation";
 
 const unit = z.string().trim().min(1).max(12).default("ud");
-const item = z.object({ reference: v.text, description: v.name, brand: v.text, unit, price: v.price, supplier: v.text, supplierRef: v.text });
+const item = z.object({ reference: v.text, description: v.name, brand: v.text, unit, price: v.price, supplier: v.text, supplierRef: v.text, currentPrice: v.price.optional(), currentPriceAt: v.date.optional(), imageUrl: z.string().max(500).regex(/^(https:\/\/.*)?$/).optional() });
+// Fecha (AAAA-MM-DD) → Date para la base de datos.
+const withDate = <T extends { currentPriceAt?: string }>(i: T) => ({ ...i, currentPriceAt: i.currentPriceAt ? new Date(i.currentPriceAt) : undefined });
 export const invoiceLine = z.object({
   description: v.name,
   unit,
@@ -41,23 +43,25 @@ export async function catalogOperation(u: Actor, action: string, input: unknown)
       i.supplierRef ? `${i.supplier.toLowerCase()}|${i.supplierRef.toLowerCase()}` : i.reference ? `|${i.reference.toLowerCase()}` : "";
     const existing = await db.catalogItem.findMany({
       where: { companyId, OR: [{ reference: { not: "" } }, { supplierRef: { not: "" } }] },
-      select: { id: true, reference: true, supplier: true, supplierRef: true },
+      select: { id: true, reference: true, supplier: true, supplierRef: true, price: true },
     });
-    const byRef = new Map(existing.map((e) => [keyOf(e), e.id]));
+    const byRef = new Map(existing.map((e) => [keyOf(e), e]));
     const seen = new Set<string>();
     const toCreate: typeof items = [];
-    const toUpdate: { id: string; data: (typeof items)[number] }[] = [];
+    const toUpdate: { id: string; data: Record<string, unknown> }[] = [];
     for (const i of items) {
       const key = keyOf(i);
       if (key && seen.has(key)) continue; // repetida dentro del mismo archivo: vale la primera
       if (key) seen.add(key);
-      const id = key ? byRef.get(key) : undefined;
-      id ? toUpdate.push({ id, data: i }) : toCreate.push(i);
+      const found = key ? byRef.get(key) : undefined;
+      // Con precio actual de Sonepar, «price» (lo que pagas tú) se conserva si ya lo había; solo se rellena si estaba a 0.
+      if (found) toUpdate.push({ id: found.id, data: withDate(i.currentPrice !== undefined && Number(found.price) > 0 ? { ...i, price: undefined } : i) });
+      else toCreate.push(i);
     }
     await db.$transaction(
       async (tx) => {
-        if (toCreate.length) await tx.catalogItem.createMany({ data: toCreate.map((i) => ({ ...i, companyId })) });
-        for (const x of toUpdate) await tx.catalogItem.update({ where: { id: x.id }, data: x.data });
+        if (toCreate.length) await tx.catalogItem.createMany({ data: toCreate.map((i) => ({ ...withDate(i), companyId })) });
+        for (const x of toUpdate) await tx.catalogItem.update({ where: { id: x.id }, data: x.data as never });
       },
       { timeout: 30000 },
     );

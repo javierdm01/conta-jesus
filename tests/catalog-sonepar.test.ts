@@ -17,7 +17,7 @@ test("parseSoneparJson asigna proveedor, marca, unidad y precio unitario", () =>
   assert.equal(items.length, 4);
   assert.equal(skipped, 1);
   assert.equal(withoutPrice, 1);
-  assert.deepEqual(items[0], { reference: "82010-30", description: "Tecla SIMON 82 blanco", brand: "SIMON", unit: "ud", price: "2.41", supplier: "Sonepar", supplierRef: "29267" });
+  assert.deepEqual(items[0], { reference: "82010-30", description: "Tecla SIMON 82 blanco", brand: "SIMON", unit: "ud", price: "2.41", supplier: "Sonepar", supplierRef: "29267", imageUrl: "" });
   assert.equal(items[1].brand, "UNEX"); // marca deducida del prefijo
   assert.equal(items[1].description, "Moldura 10x16");
   assert.equal(items[1].price, "1.03"); // el último precio es el unitario

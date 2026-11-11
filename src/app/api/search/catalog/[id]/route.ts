@@ -1,46 +1,36 @@
 import { currentUser, admin, AppError } from "@/lib/access";
 import { db } from "@/lib/db";
 import { apiError } from "@/lib/api-error";
+import { buildRows, loadExportLines } from "@/lib/catalog-export";
 
-// Dónde aparece un artículo del catálogo: líneas de albaranes y facturas de proveedor con su referencia
-// (de fabricante o del proveedor), con el precio de cada compra. Solo el responsable.
+// Dónde aparece un artículo del catálogo: líneas de facturas y albaranes de proveedor, con el precio de cada compra.
+// Es la misma asociación que usa el CSV (referencias releídas de cada documento, código de proveedor y de fabricante). Solo el responsable.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const u = await currentUser();
     admin(u);
     const { id } = await params;
-    const item = await db.catalogItem.findFirst({ where: { id, companyId: u.companyId } });
-    if (!item) throw new AppError("Artículo no encontrado.", 404);
-    const refs = [item.reference, item.supplierRef].filter(Boolean);
-    // Muchas líneas leídas de PDF no traen referencia: también se busca por el principio del nombre.
-    const name = item.description.trim().slice(0, 25);
-    const or = [
-      ...refs.map((r) => ({ reference: { equals: r, mode: "insensitive" as const } })),
-      ...(name.length >= 12 ? [{ description: { contains: name, mode: "insensitive" as const } }] : []),
-    ];
-    const lines = or.length
-      ? await db.documentLine.findMany({
-          where: { OR: or, document: { companyId: u.companyId, kind: { in: ["PURCHASE", "DELIVERY", "CREDIT"] } } },
-          include: { document: { select: { id: true, kind: true, number: true, date: true, supplier: { select: { name: true } }, job: { select: { id: true, name: true } } } } },
-          orderBy: { document: { date: "desc" } },
-          take: 100,
-        })
-      : [];
+    const [items, lines] = await Promise.all([db.catalogItem.findMany({ where: { companyId: u.companyId } }), loadExportLines(u.companyId)]);
+    const index = items.findIndex((i) => i.id === id);
+    if (index < 0) throw new AppError("Artículo no encontrado.", 404);
+    // La asociación por descripción compite entre artículos, por eso se calcula con todo el catálogo.
+    const row = buildRows(items.map((i) => ({ reference: i.reference, supplierRef: i.supplierRef, description: i.description, brand: i.brand, unit: i.unit, supplier: i.supplier, price: Number(i.price) })), lines)[index];
     return Response.json(
       {
-        uses: lines.map((l) => ({
-          id: l.id,
-          documentId: l.document.id,
-          kind: l.document.kind,
-          number: l.document.number,
-          date: l.document.date,
-          supplier: l.document.supplier?.name ?? "",
-          job: l.document.job,
-          quantity: l.quantity.toString(),
+        how: row.how,
+        uses: row.documents.map((l) => ({
+          id: l.id ?? `${l.documentId}-${l.description}`,
+          documentId: l.documentId,
+          kind: l.kind,
+          number: l.number,
+          date: l.date,
+          supplier: l.supplier,
+          job: l.job ?? null,
+          quantity: String(l.quantity),
           unit: l.unit,
-          price: l.price?.toString() ?? null,
-          discount: l.discount.toString(),
-          net: l.net?.toString() ?? null,
+          price: l.price === null ? null : String(l.price),
+          discount: String(l.discount),
+          net: l.net === null ? null : String(l.net),
         })),
       },
       { headers: { "Cache-Control": "no-store" } },

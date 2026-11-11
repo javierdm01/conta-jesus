@@ -1,13 +1,14 @@
 "use client";
 import { Fragment, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { ChevronLeft, ChevronRight, Download, FileUp, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ExternalLink, FileUp, Plus, Search, Trash2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { parseCatalogCsv, type CatalogRow } from "@/lib/catalog-csv";
 import { parseSoneparJson } from "@/lib/catalog-sonepar";
+import { soneparSearchUrl, variation } from "@/lib/catalog-links";
 
 const PAGE = 50;
 const KIND: Record<string, string> = { DELIVERY: "Albarán", PURCHASE: "Factura de proveedor", CREDIT: "Abono" };
@@ -57,7 +58,7 @@ function Usage({ id }: { id: string }) {
   );
 }
 
-type Item = CatalogRow & { id: string; supplier: string; supplierRef: string };
+type Item = CatalogRow & { id: string; supplier: string; supplierRef: string; currentPrice: string | null; imageUrl?: string };
 const eur = (n: string) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n));
 const fetcher = async (url: string) => {
   const r = await fetch(url);
@@ -166,22 +167,36 @@ export default function Catalog() {
       ) : data.items.length ? (
         <div className="panel">
           <div className="table-wrap">
-            <table>
+            <table className="cat-table">
               <thead>
-                <tr><th>Referencia</th><th>Descripción</th><th>Marca</th><th>Proveedor</th><th>Ref. prov.</th><th>Unidad</th><th>Precio</th><th /></tr>
+                <tr><th>Artículo</th><th>Pagado (último)</th><th>Hoy en Sonepar</th><th>Variación</th><th /></tr>
               </thead>
               <tbody>
                 {data.items.map((i) => (
                   <Fragment key={i.id}>
-                  <tr style={{ cursor: "pointer" }} onClick={() => setOpen(open === i.id ? "" : i.id)} aria-expanded={open === i.id}>
-                    <td>{i.reference || "—"}</td>
-                    <td style={{ whiteSpace: "normal" }}>{i.description}</td>
-                    <td>{i.brand || "—"}</td>
-                    <td>{i.supplier || "—"}</td>
-                    <td>{i.supplierRef || "—"}</td>
-                    <td>{i.unit}</td>
-                    <td>{Number(i.price) > 0 ? eur(i.price) : <span className="muted">Sin precio</span>}</td>
+                  <tr className="cat-row" style={{ cursor: "pointer" }} onClick={() => setOpen(open === i.id ? "" : i.id)} aria-expanded={open === i.id}>
+                    <td style={{ whiteSpace: "normal", minWidth: 280 }}>
+                      {i.imageUrl && /* eslint-disable-next-line @next/next/no-img-element */ <img src={i.imageUrl} alt="" loading="lazy" width={48} height={48} style={{ float: "left", marginRight: 12, borderRadius: 8, objectFit: "contain", background: "#fff" }} />}
+                      {i.description}
+                      <small className="muted" style={{ display: "block" }}>
+                        {[i.reference, i.supplierRef && i.supplierRef !== i.reference ? `Ref. prov. ${i.supplierRef}` : "", i.brand, i.supplier].filter(Boolean).join(" · ")}
+                      </small>
+                    </td>
+                    <td data-label="Pagado (último)" style={{ whiteSpace: "nowrap" }}>{Number(i.price) > 0 ? <><b>{eur(i.price)}</b><small className="muted"> / {i.unit}</small></> : <span className="muted">Sin precio</span>}</td>
+                    <td data-label="Hoy en Sonepar" style={{ whiteSpace: "nowrap" }}>{i.currentPrice ? <b>{eur(i.currentPrice)}</b> : <span className="muted">—</span>}</td>
+                    <td data-label="Variación">
+                      {(() => {
+                        const v = variation(Number(i.price), Number(i.currentPrice));
+                        return v === null ? <span className="muted">—</span> : <b className={v > 0 ? "text-red-600" : v < 0 ? "text-emerald-700" : ""}>{v > 0 ? "+" : ""}{String(v).replace(".", ",")} %</b>;
+                      })()}
+                    </td>
                     <td>
+                      {soneparSearchUrl(i) && (
+                        <a className="ib" href={soneparSearchUrl(i)} target="_blank" rel="noreferrer" title="Ver el precio actual en Sonepar" aria-label={`Ver ${i.description} en Sonepar`} onClick={(e) => e.stopPropagation()}>
+                          <ExternalLink size={16} />
+                        </a>
+                      )}
+
                       <button
                         type="button"
                         aria-label={`Borrar ${i.description}`}
@@ -195,7 +210,7 @@ export default function Catalog() {
                       </button>
                     </td>
                   </tr>
-                  {open === i.id && <tr><td colSpan={8} style={{ whiteSpace: "normal" }}><b>Dónde aparece</b><Usage id={i.id} /></td></tr>}
+                  {open === i.id && <tr className="cat-detail"><td colSpan={5} style={{ whiteSpace: "normal" }}><b>Dónde aparece</b><div style={{ overflowX: "auto" }}><Usage id={i.id} /></div></td></tr>}
                   </Fragment>
                 ))}
               </tbody>

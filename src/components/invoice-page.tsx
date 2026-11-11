@@ -7,6 +7,7 @@ import { cents, dec, lineNet } from "@/lib/money";
 import type { Customer, Job, Sale, State } from "@/lib/workspace-types";
 import { newLine, type Line } from "./lines-editor";
 import { MaterialPicker } from "./material-picker";
+import { CatalogPicker } from "./quote-builder";
 import { PersonPicker } from "./person-picker";
 
 type InvLine = Line & { discount: string; tax: string };
@@ -79,6 +80,7 @@ export default function InvoicePage({
     [collected, setCollected] = useState("0"),
     [lines, setLines] = useState<InvLine[]>([]),
     [picker, setPicker] = useState(false),
+    [catalogPicker, setCatalogPicker] = useState(false),
     [tplName, setTplName] = useState<string | null>(null),
     [info, setInfo] = useState(""),
     [busy, setBusy] = useState(false),
@@ -251,6 +253,7 @@ export default function InvoicePage({
             <Clock size={15} /> Horas del trabajo
           </Button>
           <Button type="button" size="sm" variant="outline" disabled={!job} onClick={() => setPicker(true)}>Añadir del almacén</Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => setCatalogPicker(true)}>Añadir del catálogo</Button>
           {templates.length > 0 && (
             <select className="lines-select" aria-label="Aplicar plantilla" value="" onChange={(e) => {
               const t = templates.find((x) => x.id === e.target.value);
@@ -355,6 +358,18 @@ export default function InvoicePage({
         {error && <p className="error" role="alert">{error}</p>}
       </section>
 
+      {catalogPicker && (
+        <CatalogPicker
+          close={() => setCatalogPicker(false)}
+          onAdd={(i) => {
+            const description = [i.description, i.reference && `(${i.reference})`].filter(Boolean).join(" ");
+            setLines((ls) => {
+              const at = ls.findIndex((l) => l.description === description && l.price === i.price);
+              return at >= 0 ? ls.map((l, n) => (n === at ? { ...l, quantity: String(Number(l.quantity || 0) + 1) } : l)) : [...ls, inv({ description, unit: i.unit, price: i.price })];
+            });
+          }}
+        />
+      )}
       {picker && (
         <MaterialPicker
           jobs={jobs}
