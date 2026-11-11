@@ -415,6 +415,44 @@ export async function operate(u: Actor, action: string, input: unknown) {
       return { id: sale.id };
     });
   }
+  if (action === "customerDelete") {
+    admin(u);
+    const { id } = z.object({ id: v.id }).parse(input);
+    return serial(async (tx) => {
+      const c = await tx.customer.findFirst({ where: { id, companyId }, include: { _count: { select: { jobs: true, equipment: true, contracts: true } } } });
+      if (!c) throw new AppError("Cliente no encontrado.", 404);
+      const used = [c._count.jobs && `${c._count.jobs} trabajo(s)`, c._count.equipment && `${c._count.equipment} equipo(s)`, c._count.contracts && `${c._count.contracts} contrato(s)`].filter(Boolean);
+      if (used.length) throw new AppError(`No se puede borrar: tiene ${used.join(", ")} (con sus facturas, horas y material). Para no perder la contabilidad, el cliente se conserva.`);
+      await tx.customer.delete({ where: { id } });
+      await audit(tx, u, `Eliminar cliente ${c.name}`, id);
+      return { id };
+    });
+  }
+  if (action === "supplierDelete") {
+    admin(u);
+    const { id } = z.object({ id: v.id }).parse(input);
+    return serial(async (tx) => {
+      const sp = await tx.supplier.findFirst({ where: { id, companyId }, include: { _count: { select: { documents: true, purchaseOrders: true, references: true } } } });
+      if (!sp) throw new AppError("Proveedor no encontrado.", 404);
+      const used = [sp._count.documents && `${sp._count.documents} documento(s)`, sp._count.purchaseOrders && `${sp._count.purchaseOrders} pedido(s)`, sp._count.references && `${sp._count.references} referencia(s) de precios`].filter(Boolean);
+      if (used.length) throw new AppError(`No se puede borrar: tiene ${used.join(", ")}. Para no perder la contabilidad, el proveedor se conserva.`);
+      await tx.supplierConnection.deleteMany({ where: { supplierId: id } });
+      await tx.supplier.delete({ where: { id } });
+      await audit(tx, u, `Eliminar proveedor ${sp.name}`, id);
+      return { id };
+    });
+  }
+  if (action === "quote-delete") {
+    admin(u);
+    const { id } = z.object({ id: v.id }).parse(input);
+    return serial(async (tx) => {
+      const q = await tx.quote.findFirst({ where: { id, companyId }, select: { id: true, number: true, name: true } });
+      if (!q) throw new AppError("Presupuesto no encontrado.", 404);
+      await tx.quote.delete({ where: { id } });
+      await audit(tx, u, `Eliminar presupuesto ${q.number || q.name}`, id);
+      return { id };
+    });
+  }
   if (action === "home-layout") {
     const item = z.object({ id: z.string().max(60), wide: z.boolean(), title: z.string().max(80).optional(), text: z.string().max(2000).optional(), links: z.array(z.string().max(40)).max(20).optional() });
     const { items } = z.object({ items: z.array(item).max(40) }).parse(input);

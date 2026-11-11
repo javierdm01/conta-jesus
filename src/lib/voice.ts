@@ -272,7 +272,7 @@ export async function transcribe(u: Actor, audio: File, hint = "") {
   const url = process.env.VOICE_URL;
   if (!url) throw new AppError("El servicio de voz no está configurado.", 503);
   const form = new FormData();
-  form.append("file", audio, "voz.webm");
+  form.append("file", audio, audio.name || "voz.webm");
   if (hint) form.append("prompt", hint);
   const r = await fetch(`${url}/transcribe`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) }).catch(() => null);
   if (!r?.ok) {

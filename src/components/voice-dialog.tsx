@@ -35,7 +35,7 @@ const FIXED = ["Hecho, guardado.", "Vale, lo dejo sin guardar."];
 const LABEL: Record<Phase, string> = { idle: "Toca el micrófono para hablar", listening: "Te escucho… toca para enviar", thinking: "Pensando…", speaking: "Hablando…" };
 const STATUS: Record<Phase, string> = { idle: "Listo", listening: "Escuchando…", thinking: "Pensando…", speaking: "Hablando…" };
 // Sugerencias tipo Copilot: lo que suele venir después de cada acción. «▮» marca dónde queda el cursor si el texto se completa a mano.
-type Chip = { label: string; text: string; fill?: boolean; admin?: boolean };
+type Chip = { label: string; text: string; fill?: boolean; admin?: boolean; flow?: "hours" | "material"; customer?: string };
 const C = (label: string, text = label, o: Partial<Chip> = {}): Chip => ({ label, text, ...o });
 const SUGGESTIONS: Chip[] = [
   C("¿Cuánto me deben?", "¿Cuánto me deben en total?", { admin: true }),
@@ -45,8 +45,8 @@ const SUGGESTIONS: Chip[] = [
   C("Horas de este mes", "¿Cuántas horas llevo este mes?"),
 ];
 const of = (c?: string) => (c ? ` de ${c}` : "");
-const HOURS = (c?: string) => C("Registrar horas", `Registra horas de 8 a 5 en el último trabajo${of(c)}`);
-const MATERIAL = (c?: string) => C("Añadir material", `Añade un ▮ al último trabajo${of(c)}`, { fill: true });
+const HOURS = (c?: string) => C("Registrar horas", "", { flow: "hours", customer: c });
+const MATERIAL = (c?: string) => C("Añadir material", "", { flow: "material", customer: c });
 const FINISH = (c?: string) => C("Marcar finalizado", `Marca como finalizado el último trabajo${of(c)}`);
 const OPEN = C("Trabajos abiertos", "Muéstrame los trabajos abiertos");
 const OWED = C("¿Cuánto me deben?", "¿Cuánto me deben en total?", { admin: true });
@@ -99,11 +99,15 @@ function afterAnswer(title?: string): Chip[] {
   return [OPEN, OWED, LOW];
 }
 const FALLBACK: Chip[] = [C("Crear un cliente", "Créame al cliente ▮", { fill: true, admin: true }), HOURS(), MATERIAL(), C("Lista de clientes", "Sácame una lista de todos los clientes", { admin: true })];
+// Conversación guiada: si falta un dato (horas, día, material, trabajo) el asistente lo pregunta en vez de inventarlo.
+type Flow = { kind: "hours" | "material"; customer?: string; step: "range" | "day" | "job" | "item"; data: { range?: string; day?: string; item?: string } };
+const DAY_CHIPS: Chip[] = [C("Hoy", "hoy"), C("Ayer", "ayer"), C("Anteayer", "anteayer")];
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 const MAX_REC = 15; // segundos
 const mmss = (s: number) => `0:${String(Math.min(Math.floor(s), MAX_REC)).padStart(2, "0")}`;
 
 // Conversación por voz: escucha hasta que callas, responde en voz alta y pide confirmación antes de guardar.
-export default function VoiceDialog({ close, confirm, admin = true }: { close: () => void; admin?: boolean; confirm: (action: string, payload: unknown, meta: { text: string; summary: string }) => Promise<void> }) {
+export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }: { close: () => void; admin?: boolean; jobs?: { label: string; customer: string }[]; confirm: (action: string, payload: unknown, meta: { text: string; summary: string }) => Promise<void> }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [log, setLog] = useState<Line[]>([]);
   const [text, setText] = useState("");
@@ -120,6 +124,34 @@ export default function VoiceDialog({ close, confirm, admin = true }: { close: (
   const stream = useRef<MediaStream | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
   const stopRec = useRef<{ send: () => void; cancel: () => void } | null>(null);
+  const flow = useRef<Flow | null>(null);
+  const player = useRef<HTMLAudioElement | null>(null); // un solo <audio>: iOS solo deja sonar el que se «desbloqueó» con un toque
+  const ctxRef = useRef<AudioContext | null>(null); // un solo AudioContext, creado con un toque (en Safari un contexto nuevo nace en pausa)
+  const unlocked = useRef(false);
+  const [vvh, setVvh] = useState<number | null>(null);
+  const getCtx = () => {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    return (ctxRef.current ??= new AC());
+  };
+  // Se llama con el primer toque dentro del asistente: desbloquea sonido y micrófono para el resto de la conversación.
+  const unlock = () => {
+    if (unlocked.current) return;
+    unlocked.current = true;
+    try {
+      const a = (player.current ??= new Audio());
+      a.src = SILENT_WAV;
+      a.play().then(() => a.pause()).catch(() => {});
+    } catch {}
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(" ");
+      u.volume = 0;
+      speechSynthesis.speak(u);
+    } catch {}
+    try {
+      void getCtx().resume();
+    } catch {}
+  };
 
   const speech = (t: string) => {
     const { voice, speed } = prefsRef.current;
@@ -157,10 +189,12 @@ export default function VoiceDialog({ close, confirm, admin = true }: { close: (
       jobs[i]
         .then((b) => {
           if (!alive.current) return;
-          const a = new Audio(URL.createObjectURL(b));
+          const a = (player.current ??= new Audio());
+          const url = URL.createObjectURL(b);
           audio.current = a;
-          a.onended = () => play(i + 1);
+          a.onended = () => (URL.revokeObjectURL(url), play(i + 1));
           a.onerror = fallback;
+          a.src = url;
           return a.play().then(start, fallback);
         })
         .catch(fallback);
@@ -190,12 +224,66 @@ export default function VoiceDialog({ close, confirm, admin = true }: { close: (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs]);
 
-  const handle = async (said: string, keepListening: boolean) => {
+  const nextListen = (keep: boolean) => () => keep && alive.current && listen();
+  // Pregunta un dato que falta; las respuestas rápidas salen como botones y, si la conversación es por voz, vuelve a escuchar.
+  const askFlow = (q: string, chips: Chip[], keep: boolean) => {
+    setFollow(chips);
+    say(q, nextListen(keep));
+  };
+  const startFlow = (kind: "hours" | "material", customer: string | undefined, keep: boolean) => {
+    flow.current = { kind, customer, step: kind === "hours" ? "range" : "item", data: {} };
+    askFlow(kind === "hours" ? "¿De qué hora a qué hora? Por ejemplo, de 8 a 5." : "¿Qué material y cuántas unidades? Por ejemplo, 3 enchufes.", [], keep);
+  };
+  const handleFlow = (said: string, keep: boolean): Promise<void> | void => {
+    const f = flow.current!;
+    const n = plain(said);
+    const next = nextListen(keep);
+    if (NO.test(n) || /^(cancela|olvida|deja)/.test(n)) {
+      flow.current = null;
+      setFollow([]);
+      return say("Vale, lo dejo.", next);
+    }
+    const compose = (customer?: string): Promise<void> | void => {
+      const cmd =
+        f.kind === "hours"
+          ? `Registra horas ${f.data.range} en el último trabajo${of(customer)}${f.data.day ? ` ${f.data.day}` : ""}`
+          : `Añade ${f.data.item} al último trabajo${of(customer)}`;
+      flow.current = null;
+      return handle(cmd, keep, false);
+    };
+    const askJob = () => {
+      f.step = "job";
+      const chips = [...jobs.slice(0, 5).map((j) => C(j.label, j.customer)), C("El último trabajo", "__last")];
+      askFlow("¿En qué trabajo?", chips, keep);
+    };
+    if (f.step === "range") {
+      const times = (n.match(/\d+|\b(?:una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b/g) ?? []).length;
+      if (times < 2) return askFlow("No te he entendido. Dime la hora de inicio y la de fin, por ejemplo «de 8 a 5».", [], keep);
+      f.data.range = /^(?:de|desde)\b/.test(n) ? said : `de ${said}`;
+      f.step = "day";
+      return askFlow("¿Qué día fue?", DAY_CHIPS, keep);
+    }
+    if (f.step === "day") {
+      f.data.day = /antes de ayer|anteayer/.test(n) ? "anteayer" : /^hoy/.test(n) ? "" : /^ayer/.test(n) ? "ayer" : said;
+      return f.customer ? compose(f.customer) : askJob();
+    }
+    if (f.step === "item") {
+      f.data.item = said;
+      return f.customer ? compose(f.customer) : askJob();
+    }
+    return compose(said === "__last" ? undefined : said);
+  };
+  const handle = async (said: string, keepListening: boolean, echo = true): Promise<void> => {
+    if (echo) {
+      setLog((l) => [...l, { who: "tú", text: said }]);
+      setFollow([]);
+    }
+    if (flow.current) return handleFlow(said, keepListening);
     // Un «sí»/«no» suelto sin nada pendiente (eco, o repetido) no es una orden: se ignora sin gastar una consulta.
     const n0 = plain(said);
     if (!pending.current && n0.length < 20 && (YES.test(n0) || NO.test(n0))) return keepListening && alive.current ? listen() : undefined;
-    setLog((l) => [...l, { who: "tú", text: said }]);
-    setFollow([]);
+    // «Registra horas» sin decir de cuándo a cuándo: se pregunta, nunca se supone un horario.
+    if (!pending.current && echo && /\b(?:registr|apunt|anad|pon|met|agreg)\w*\b.*\bhoras?\b/.test(n0) && !/\b(?:de|desde)\s+\S+\s+(?:a|hasta)\s+\S+/.test(n0)) return startFlow("hours", undefined, keepListening);
     const next = () => keepListening && alive.current && listen();
     const p = pending.current;
     if (p) {
@@ -232,48 +320,60 @@ export default function VoiceDialog({ close, confirm, admin = true }: { close: (
     }
   };
 
-  // Escucha una frase: graba cuando detecta voz y se para al callar (máximo 15 s).
+  // Escucha una frase: graba cuando detecta voz y se para al callar (máximo 15 s). Funciona en Chrome y Safari del móvil.
   const listen = async () => {
     setError("");
+    if (typeof MediaRecorder === "undefined") return setError("Este navegador no permite grabar audio. Escribe la orden.");
     try {
-      stream.current ??= await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.current ??= await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch {
-      return setError("No se puede usar el micrófono (hace falta https o localhost y dar permiso). Escribe la orden.");
+      return setError("No se puede usar el micrófono: hace falta conexión segura (https) y dar permiso al navegador. Escribe la orden.");
     }
     const s = stream.current;
-    const ctx = new AudioContext();
+    const ctx = getCtx();
+    await ctx.resume().catch(() => {});
     const an = ctx.createAnalyser();
     an.fftSize = 1024;
-    ctx.createMediaStreamSource(s).connect(an);
+    const src = ctx.createMediaStreamSource(s);
+    src.connect(an);
     const buf = new Uint8Array(an.fftSize);
-    const rec = new MediaRecorder(s);
+    // Si el navegador no deja analizar el sonido (contexto en pausa), se graba igualmente y se corta a mano o a los 15 s.
+    const vad = ctx.state === "running";
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"].find((m) => MediaRecorder.isTypeSupported?.(m));
+    const rec = new MediaRecorder(s, mime ? { mimeType: mime } : undefined);
     const chunks: Blob[] = [];
-    rec.ondataavailable = (e) => chunks.push(e.data);
-    let heard = false, lastVoice = Date.now(), cancelled = false;
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    let heard = !vad, lastVoice = Date.now(), cancelled = false, floor = 0, samples = 0;
     const t0 = Date.now();
     setLevels(Array(32).fill(0));
     setElapsed(0);
     const tick = setInterval(() => {
       an.getByteTimeDomainData(buf);
-      const level = Math.max(...buf.map((x) => Math.abs(x - 128))) / 128;
+      let sum = 0;
+      for (const x of buf) sum += ((x - 128) / 128) ** 2;
+      const level = Math.sqrt(sum / buf.length);
       const now = Date.now();
-      if (level > 0.08) (heard = true), (lastVoice = now);
-      setLevels((l) => [...l.slice(1), Math.min(1, level * 2.4)]);
+      // El ruido de fondo de cada móvil se mide al principio; la voz es lo que lo supera con claridad.
+      if (samples < 5) (floor = Math.max(floor, level)), samples++;
+      else if (vad && level > Math.max(0.03, floor * 2.2)) (heard = true), (lastVoice = now);
+      setLevels((l) => [...l.slice(1), Math.min(1, level * 5)]);
       setElapsed((now - t0) / 1000);
-      // Se corta solo: 1 s de silencio tras hablar, 8 s si nadie habla y 15 s como máximo.
-      if ((heard && now - lastVoice > 1000) || now - t0 > (heard ? MAX_REC * 1000 : 8000)) rec.stop();
+      // Se corta solo: 1,2 s de silencio tras hablar, 8 s si nadie habla y 15 s como máximo.
+      if ((vad && heard && now - lastVoice > 1200) || now - t0 > (heard ? MAX_REC * 1000 : 8000)) rec.stop();
     }, 100);
     const end = () => rec.state !== "inactive" && rec.stop();
     stopRec.current = { send: end, cancel: () => ((cancelled = true), end()) };
     rec.onstop = async () => {
       clearInterval(tick);
-      ctx.close();
+      src.disconnect();
       stopRec.current = null;
       if (cancelled || !alive.current) return setPhase("idle");
-      if (!heard) return setPhase("idle"); // nadie habló: se queda esperando
+      const type = rec.mimeType || mime || "audio/webm";
+      const blob = new Blob(chunks, { type });
+      if (!heard || blob.size < 1500) return setPhase("idle"); // nadie habló (o fue un toque): se queda esperando
       setPhase("thinking");
       const f = new FormData();
-      f.append("audio", new Blob(chunks, { type: rec.mimeType }), "voz.webm");
+      f.append("audio", blob, /mp4|aac/.test(type) ? "voz.m4a" : "voz.webm");
       try {
         const r = await fetch("/api/voice?stt", { method: "POST", body: f });
         const d: Reply = await r.json();
@@ -316,8 +416,29 @@ export default function VoiceDialog({ close, confirm, admin = true }: { close: (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [showSettings, setShowSettings] = useState(false);
+  // iOS no encoge la pantalla al salir el teclado: se ajusta la altura al área visible real.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv || !window.matchMedia("(max-width:760px)").matches) return;
+    const on = () => {
+      setVvh(vv.height);
+      if (window.scrollY) window.scrollTo(0, 0);
+    };
+    on();
+    vv.addEventListener("resize", on);
+    vv.addEventListener("scroll", on);
+    return () => {
+      vv.removeEventListener("resize", on);
+      vv.removeEventListener("scroll", on);
+    };
+  }, []);
   const inputRef = useRef<HTMLInputElement>(null);
   const onChip = (c: Chip) => {
+    unlock();
+    if (c.flow) {
+      setLog((l) => [...l, { who: "tú", text: c.label }]);
+      return startFlow(c.flow, c.customer, false);
+    }
     if (!c.fill) return handle(c.text, false);
     const at = c.text.indexOf("▮");
     setText(c.text.replace("▮", ""));
@@ -340,7 +461,7 @@ export default function VoiceDialog({ close, confirm, admin = true }: { close: (
 
   return (
     <div className="va-overlay" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-      <section className="va" role="dialog" aria-modal="true" aria-label="Asistente">
+      <section className="va" role="dialog" aria-modal="true" aria-label="Asistente" style={vvh ? { height: vvh } : undefined} onPointerDownCapture={unlock}>
         <header className="va-head">
           <span className="va-avatar"><Sparkles size={20} /></span>
           <div className="va-title">

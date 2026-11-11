@@ -225,7 +225,7 @@ export default function Expenses({
                   <button
                     type="button"
                     aria-label={`Eliminar gasto ${o.description}`}
-                    onClick={() => window.confirm("¿Eliminar este gasto?") && onDelete(o.id)}
+                    onClick={() => onDelete(o.id)}
                   >
                     <Trash2 size={16} />
                   </button>

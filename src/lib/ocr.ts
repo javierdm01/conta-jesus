@@ -1,6 +1,13 @@
 import { lineNet, documentLineNet, dec, sum, cents } from "./money";
 import { matchSupplier, type SupplierCandidate } from "./supplier-match";
 import type { Evidence } from "./ocr-evidence";
+import { gridFrom, gridIdentity, gridLines } from "./ocr-grid";
+
+// Proveedores conocidos con maquetación propia: su nombre y NIF salen de la cabecera aunque el OCR los lea mal
+// (el documento lleva también el NIF del cliente, que no debe confundirse con el del proveedor).
+const KNOWN_SUPPLIERS = [
+  { test: /suministros\s+y\s+transportes\s+inra|\bgrupo\s+unase\b/i, name: "SUMINISTROS Y TRANSPORTES INRA, S.L.", taxId: "B13555594", phone: "926709364" },
+];
 export type OcrSuggestion = {
   number?: string;
   date?: string;
@@ -87,6 +94,8 @@ export function parseOcr(
       "Propuesta OCR: comprueba cada campo con el original antes de confirmar.",
     ],
   };
+  const { grid, rest } = gridFrom(text);
+  text = rest;
   const clean = text.replace(/[   ]/g, " ").replace(/\bSCIF\s*:/gi,"CIF:");
   if (/oferta\s*(?:de\s*)?venta|presupuesto/i.test(clean))
     result.warnings.push("El documento parece una oferta o presupuesto. No acredita una entrega ni una factura: comprueba su tipo antes de registrar una recepción.");
@@ -103,6 +112,8 @@ export function parseOcr(
     /\b\d{4,10}\s*\|?\s+(\d{1,2}\/\d{1,2}\/\d{4})\s*\|?\s+([A-Z0-9]+[-/][A-Z0-9/-]+)/,
   );
   if (tabularIdentity) result.number = tabularIdentity[2];
+  const offerRow = metadataBlock.match(/^\s*(\d{6,10})\s+\d{1,2}\s+\d{3,6}\s+(\d{1,2}\/\d{1,2}\/\d{4})\s*$/m);
+  if (offerRow) result.number = offerRow[1];
   const positionedNumber=clean.match(/^Documento Nº ([A-Z0-9][A-Z0-9/-]{3,49})\s*$/m)?.[1];
   if(positionedNumber) result.number=positionedNumber;
   for (let i = 0; i < metadataRows.length; i++) {
@@ -366,6 +377,15 @@ export function parseOcr(
         .trim() ?? "";
     if (taxId && /[A-Za-zÁÉÍÓÚÑ]/.test(name))
       result.supplier = { name, taxId, phone, email: metadataRows.slice(Math.max(0,taxRow-3),taxRow+9).join(" ").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]??"" };
+  }
+  const known = KNOWN_SUPPLIERS.find((k) => k.test.test(clean));
+  if (known) {
+    result.supplier = { name: known.name, taxId: known.taxId, phone: known.phone, email: "" };
+    const mine = suppliers.find((s) => s.taxId.toUpperCase().replace(/[^A-Z0-9]/g, "") === known.taxId);
+    if (mine && !match.supplierId) {
+      match.supplierId = mine.id;
+      match.by = "taxId";
+    }
   }
   if (match.supplierId) {
     result.supplierId = match.supplierId;
@@ -649,6 +669,35 @@ export function parseOcr(
       discount,
       family: productFamily(m[1]),
     });
+  }
+  if (grid) {
+    const g = gridLines(grid, result.net);
+    if (g.lines.length) {
+      result.lines = g.lines.map((l) => ({ ...l, family: productFamily(l.description) }));
+      result.warnings.push(
+        g.matched
+          ? "Líneas leídas celda a celda de la tabla con rejilla del proveedor; sus importes suman la base del documento. Comprueba códigos y descripciones con el original."
+          : "Líneas leídas celda a celda de la tabla con rejilla del proveedor; no se ha podido comprobar que sumen la base del documento: revisa cantidades y precios con el original.",
+        "Unidad no impresa en la tabla: se propone ud; comprueba si el proveedor factura metros, rollos u otra unidad.",
+        ...g.warnings,
+      );
+    }
+    for (const note of grid.notes.map((n) => n.replace(/\s+/g, " ").trim()).filter((n) => /[A-Za-zÁÉÍÓÚÑáéíóúñ]{3}/.test(n)))
+      result.warnings.push(`Nota del proveedor en el documento: ${note}`);
+    if (grid.rows.some((r) => Number(r.values.raee) > 0))
+      result.warnings.push("Alguna línea lleva tasa RAEE: comprueba si el importe de la línea la incluye.");
+    // Cabecera de la rejilla: número y fecha leídos aparte, con más resolución, cuando el OCR general los pierde o los confunde.
+    const id = gridIdentity(grid.identity);
+    if (id.number && !result.number) result.number = id.number;
+    if (id.date) {
+      const y = id.date.y, now = new Date().getFullYear();
+      const value = valid(y, id.date.m, id.date.d);
+      const current = result.date ? Number(result.date.slice(0, 4)) : undefined;
+      if (value && (!result.date || (result.date !== value && current !== undefined && (current < now - 2 || current > now + 1) && y >= now - 2 && y <= now + 1))) {
+        if (result.date) result.warnings.push(`Fecha corregida con la lectura de la cabecera (${result.date} → ${value}): confírmala.`);
+        result.date = value;
+      }
+    }
   }
   if (
     result.net &&

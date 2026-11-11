@@ -29,6 +29,7 @@ import {
   Download,
   RefreshCw,
   Trash2,
+  Pencil,
   Euro,
   Wallet,
   FolderUp,
@@ -69,6 +70,7 @@ import { QuoteBuilder } from "./quote-builder";
 import { MaterialPicker } from "./material-picker";
 import { StatusFilter, pillTone } from "./status-filter";
 import { AssistantFab } from "./assistant-fab";
+import { ConfirmDialog } from "./confirm-dialog";
 import { PersonPicker, type Person } from "./person-picker";
 import { uploadDocument } from "@/lib/optimize-upload";
 const Catalog = dynamic(() => import("./catalog"), { loading: () => <PageSkeleton /> });
@@ -104,6 +106,7 @@ import { services, statuses } from "@/lib/validation";
 import type {
   Customer,
   Supplier,
+  Quote,
   Worker,
   Job,
   Doc,
@@ -316,6 +319,8 @@ export function Dashboard({
     [sort, setSort] = useState("gross");
   const router = useRouter();
   const [documentView, setDocumentView] = useState("all");
+  const [ask, setAsk] = useState<{ title: string; message: string; label: string; run: () => Promise<void> } | null>(null);
+  const [askBusy, setAskBusy] = useState(false);
   // Listados en el móvil: cada fila de una tabla se enseña como tarjeta; aquí se copia el título de cada columna a sus celdas.
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | undefined;
@@ -945,26 +950,46 @@ export function Dashboard({
     setStatusBusy(true);
     try { await run("status", { jobId, status }); } finally { setStatusBusy(false); }
   };
+  // Modal de «¿Estás seguro?»: el borrado se ejecuta al confirmar y los errores (p. ej. «tiene trabajos») salen en la propia pantalla.
+  const confirmThen = (title: string, message: string, label: string, run: () => Promise<void>) => setAsk({ title, message, label, run });
   const deleteSale = async (sale: Sale) => {
     const paid = Number(sale.collected) > 0 ? ` Tiene ${euro(sale.collected)} registrados como cobrados.` : "";
-    if (!window.confirm(`¿Eliminar la factura ${sale.number}? Se borrará con sus líneas y adjuntos vinculados.${paid} No se puede deshacer.`)) return;
-    try {
+    confirmThen("¿Eliminar la factura?", `La factura ${sale.number} se borrará con sus líneas y adjuntos vinculados.${paid} No se puede deshacer.`, "Sí, eliminar", async () => {
       await request("/api/operations/sale-delete", { saleId: sale.id });
       await load();
       setToast("Factura eliminada.");
       if (pathname.startsWith("/facturas-venta/")) router.push("/facturas-venta");
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    });
   };
+  const deleteQuote = (q: Quote) =>
+    confirmThen("¿Eliminar el presupuesto?", `El presupuesto ${q.number || q.name} se borrará con sus líneas. No se puede deshacer.`, "Sí, eliminar", async () => {
+      await request("/api/operations/quote-delete", { id: q.id });
+      await load();
+      setToast("Presupuesto eliminado.");
+      if (pathname.startsWith("/presupuestos/")) router.push("/presupuestos");
+    });
+  const deleteCustomer = (c: Customer) =>
+    confirmThen("¿Eliminar el cliente?", `Se borrará «${c.name}». Solo es posible si no tiene trabajos; si los tiene, se conserva para no perder la contabilidad.`, "Sí, eliminar", async () => {
+      await request("/api/operations/customerDelete", { id: c.id });
+      await load();
+      setToast("Cliente eliminado.");
+      if (pathname.startsWith("/clientes/")) router.push("/clientes");
+    });
+  const deleteSupplier = (x: Supplier) =>
+    confirmThen("¿Eliminar el proveedor?", `Se borrará «${x.name}». Solo es posible si no tiene documentos ni pedidos.`, "Sí, eliminar", async () => {
+      await request("/api/operations/supplierDelete", { id: x.id });
+      await load();
+      setToast("Proveedor eliminado.");
+    });
   const setJobArchived = async (job: Job, archive: boolean) => {
-    if (archive && !window.confirm(`¿Retirar «${job.name}» de la lista? Se conservarán sus facturas, horas, documentos, material y presupuesto. Las reservas de material se mantienen. Podrás recuperarlo desde Retirados.`)) return;
-    try {
+    const run = async () => {
       await request(`/api/operations/${archive ? "job-archive" : "job-restore"}`, { jobId: job.id });
       await load();
       setToast(archive ? "Trabajo retirado. Puedes recuperarlo desde Retirados." : "Trabajo recuperado.");
       if (selected?.id === job.id) router.push("/trabajos");
-    } catch (e) { setError((e as Error).message); }
+    };
+    if (archive) return confirmThen("¿Retirar el trabajo?", `«${job.name}» saldrá de la lista. Se conservan sus facturas, horas, documentos, material y presupuesto, y podrás recuperarlo desde «Retirados».`, "Sí, retirar", run);
+    try { await run(); } catch (e) { setError((e as Error).message); }
   };
   const jobTable = (rows: Job[]) =>
     rows.length ? (
@@ -1033,7 +1058,11 @@ export function Dashboard({
                   </>
                 )}
                 <td>
-                  {isAdmin && <button className="text-button mr-3" aria-label={`${j.archivedAt ? "Recuperar" : "Eliminar de la lista"} ${j.name}`} onClick={(e) => { e.stopPropagation(); void setJobArchived(j, !j.archivedAt); }}>{j.archivedAt ? "Recuperar" : "Eliminar"}</button>}
+                  {isAdmin && (
+                    <button className={`ib ${j.archivedAt ? "" : "danger"} mr-2`} title={j.archivedAt ? "Recuperar" : "Retirar de la lista"} aria-label={`${j.archivedAt ? "Recuperar" : "Retirar de la lista"} ${j.name}`} onClick={(e) => { e.stopPropagation(); void setJobArchived(j, !j.archivedAt); }}>
+                      {j.archivedAt ? <RefreshCw size={16} /> : <Trash2 size={16} />}
+                    </button>
+                  )}
                   <Link
                     prefetch={true}
                     href={jobPath(j)}
@@ -1648,7 +1677,10 @@ export function Dashboard({
                 </span>
               </div>
             </div>
-            <Button variant="outline" onClick={() => createContact("customer", c)}>Editar cliente</Button>
+            <div className="ib-row">
+              <button className="ib" title="Editar cliente" aria-label="Editar cliente" onClick={() => createContact("customer", c)}><Pencil size={18} /></button>
+              <button className="ib danger" title="Eliminar cliente" aria-label="Eliminar cliente" onClick={() => deleteCustomer(c)}><Trash2 size={18} /></button>
+            </div>
           </div>
         </header>
         <div className="stats">
@@ -2262,7 +2294,10 @@ export function Dashboard({
                     {s.customers.filter((c) => matchesSearch(customerQuery, [c.name, c.taxId, c.address, c.phone, c.email])).map((c) => (
                       <div className="record customer-record" key={c.id}>
                         <div><Link href={`/clientes/${c.id}`}><strong>{c.name}</strong></Link><small>{[c.taxId, c.address].filter(Boolean).join(" · ") || "Datos fiscales y dirección pendientes"}</small><small>{[c.phone, c.email].filter(Boolean).join(" · ") || "Sin datos de contacto"}</small></div>
-                        <Button variant="outline" size="sm" onClick={() => createContact("customer", c)} aria-label={`Editar ${c.name}`}>Editar</Button>
+                        <div className="ib-row">
+                          <button className="ib" title="Editar" aria-label={`Editar ${c.name}`} onClick={() => createContact("customer", c)}><Pencil size={16} /></button>
+                          <button className="ib danger" title="Eliminar" aria-label={`Eliminar ${c.name}`} onClick={() => deleteCustomer(c)}><Trash2 size={16} /></button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2340,12 +2375,10 @@ export function Dashboard({
                                 </Link>
                               </td>
                               <td>
-                                <button
-                                  className="text-button"
-                                  onClick={() => createContact("supplier", x)}
-                                >
-                                  Editar
-                                </button>
+                                <div className="ib-row">
+                                  <button className="ib" title="Editar" aria-label={`Editar ${x.name}`} onClick={() => createContact("supplier", x)}><Pencil size={16} /></button>
+                                  <button className="ib danger" title="Eliminar" aria-label={`Eliminar ${x.name}`} onClick={() => deleteSupplier(x)}><Trash2 size={16} /></button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -2513,7 +2546,7 @@ export function Dashboard({
             <Expenses
               overheads={s.overheads}
               onAdd={() => setExpense(true)}
-              onDelete={(id) => run("overheadDelete", { id })}
+              onDelete={(id) => confirmThen("¿Eliminar el gasto?", "El gasto se borrará de tus cuentas. No se puede deshacer.", "Sí, eliminar", async () => { await request("/api/operations/overheadDelete", { id }); await load(); setToast("Gasto eliminado."); })}
             />
           )}
           {section === "calendario" && isAdmin && <TaxCalendar />}
@@ -2550,12 +2583,13 @@ export function Dashboard({
           {section === "presupuestos" && isAdmin && (pathname.split("/")[2] ? (
             <QuoteDetail
               key={pathname}
+              onDelete={deleteQuote}
               quote={s.jobs.flatMap((j) => j.quotes).find((x) => x.id === pathname.split("/")[2])}
               job={s.jobs.find((j) => j.quotes.some((x) => x.id === pathname.split("/")[2]))}
               refresh={load}
             />
           ) : (
-            <QuotesList jobs={s.jobs} onNew={createQuote} refresh={load} />
+            <QuotesList jobs={s.jobs} onNew={createQuote} onDelete={deleteQuote} refresh={load} />
           ))}
           {section === "nuevo-presupuesto" && isAdmin && (
             <InvoicePage
@@ -3015,8 +3049,29 @@ export function Dashboard({
           }}
         />
       )}
+      <ConfirmDialog
+        open={!!ask}
+        title={ask?.title ?? ""}
+        message={ask?.message ?? ""}
+        confirmLabel={ask?.label}
+        busy={askBusy}
+        onCancel={() => setAsk(null)}
+        onConfirm={async () => {
+          if (!ask) return;
+          setAskBusy(true);
+          try {
+            await ask.run();
+            setAsk(null);
+          } catch (e) {
+            setAsk(null);
+            setError((e as Error).message);
+          } finally {
+            setAskBusy(false);
+          }
+        }}
+      />
       {!voice && <AssistantFab onOpen={() => setVoice(true)} />}
-      {voice && <VoiceDialog admin={isAdmin} close={() => setVoice(false)} confirm={async (action, payload, meta) => { await request("/api/voice/confirm", { action, payload, ...meta }); await saved(); }} />}
+      {voice && <VoiceDialog admin={isAdmin} jobs={activeJobs.slice(0, 5).map((j) => ({ label: `${j.customer.name} · ${j.name}`, customer: j.customer.name }))} close={() => setVoice(false)} confirm={async (action, payload, meta) => { await request("/api/voice/confirm", { action, payload, ...meta }); await saved(); }} />}
       {expense && (
         <ExpenseForm
           defaultTax={s.company.defaultTax}

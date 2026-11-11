@@ -4,6 +4,7 @@ import useSWR from "swr";
 import { ChevronLeft, ChevronRight, FileUp, Plus, Search, Trash2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "./confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { parseCatalogCsv, type CatalogRow } from "@/lib/catalog-csv";
 import { parseSoneparJson } from "@/lib/catalog-sonepar";
@@ -75,6 +76,7 @@ export default function Catalog() {
     [noPrice, setNoPrice] = useState(false),
     [open, setOpen] = useState(""),
     [adding, setAdding] = useState(false),
+    [del, setDel] = useState<{ id: string; description: string } | null>(null),
     [draft, setDraft] = useState<CatalogRow>({ reference: "", description: "", brand: "", unit: "ud", price: "" }),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
@@ -176,11 +178,10 @@ export default function Catalog() {
                       <button
                         type="button"
                         aria-label={`Borrar ${i.description}`}
-                        className="text-button"
-                        onClick={async (e) => {
+                        className="ib danger"
+                        onClick={(e) => {
                           e.stopPropagation();
-                          await op("catalog-delete", { id: i.id }).catch((e) => setError(e.message));
-                          await mutate();
+                          setDel({ id: i.id, description: i.description });
                         }}
                       >
                         <Trash2 size={16} />
@@ -245,6 +246,26 @@ export default function Catalog() {
           </form>
         </Dialog>
       )}
+      <ConfirmDialog
+        open={!!del}
+        title="¿Eliminar el artículo?"
+        message={`«${del?.description ?? ""}» se quitará del catálogo. No se puede deshacer.`}
+        busy={busy}
+        onCancel={() => setDel(null)}
+        onConfirm={async () => {
+          if (!del) return;
+          setBusy(true);
+          try {
+            await op("catalog-delete", { id: del.id });
+            await mutate();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+            setDel(null);
+          }
+        }}
+      />
     </>
   );
 }

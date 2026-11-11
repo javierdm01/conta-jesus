@@ -517,3 +517,23 @@ input[type=range]{padding:0;border:0;box-shadow:none;margin:8px 0}
   table[data-cards] td:last-child:not([data-title]):not(:has(input)){margin-top:2px}
   table[data-cards] td .st-pill,table[data-cards] td .pill{flex:none}
 }
+
+/* Botones de icono (editar / eliminar) y modal de confirmación */
+.ib-row{display:flex;align-items:center;gap:8px}
+.ib{display:inline-grid;place-items:center;flex:none;width:38px;height:38px;padding:0;border:1px solid #dfe8e5;border-radius:12px;background:#fff;color:#4a6760;transition:background .12s,color .12s,border-color .12s}
+.ib:hover:not(:disabled){background:#eef6f4;color:#0f766e;border-color:#bcd9d2}
+.ib.danger{color:#c2554a;border-color:#f1d4d0}.ib.danger:hover:not(:disabled){background:#fee2e2;color:#b91c1c;border-color:#f3b4ae}
+.ib:disabled{opacity:.4;cursor:not-allowed}
+.inv-actions .inv-trash{align-self:center;margin-left:4px;width:42px;height:42px}
+.confirm-body{display:flex;gap:14px;align-items:flex-start;padding:4px 0 10px}
+.confirm-body p{margin:0;line-height:1.5;color:#33504a;font-size:15px}
+.confirm-ico{display:grid;place-items:center;flex:none;width:46px;height:46px;border-radius:50%;background:#fee2e2;color:#dc2626}
+@media(max-width:760px){.ib{width:44px;height:44px}.inv-actions .inv-trash{flex:none;width:58px;height:58px;border-radius:14px}}
+
+/* Asistente: compatibilidad Safari / Chrome del móvil */
+.va{height:100vh;height:100dvh}
+.va-overlay{-webkit-backdrop-filter:blur(3px)}
+.va-chat,.va-chips,.va-list ul{-webkit-overflow-scrolling:touch}
+.va-bar input{-webkit-appearance:none;appearance:none;-webkit-user-select:text}
+.va-mic,.va-icon,.va-chips button{-webkit-tap-highlight-color:transparent}
+@media(min-width:761px){.va{height:min(760px,92vh)}}

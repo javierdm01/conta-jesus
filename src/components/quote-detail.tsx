@@ -8,7 +8,7 @@ import { eur, fmt } from "./invoice-list";
 import { QuoteActions, QuotePill, quoteLabel, quoteTotal } from "./quotes-list";
 
 // Dentro de un presupuesto: acciones arriba, datos, líneas y totales (como una factura).
-export default function QuoteDetail({ quote, job, refresh }: { quote?: Quote; job?: Job; refresh: () => Promise<void> }) {
+export default function QuoteDetail({ quote, job, onDelete, refresh }: { quote?: Quote; job?: Job; onDelete?: (q: Quote) => void; refresh: () => Promise<void> }) {
   const [error, setError] = useState("");
   if (!quote)
     return (
@@ -28,7 +28,7 @@ export default function QuoteDetail({ quote, job, refresh }: { quote?: Quote; jo
       </nav>
       <div className="list-head">
         <h1>Presupuesto {quoteLabel(quote)}</h1>
-        <QuoteActions quote={quote} job={job} open={false} refresh={refresh} onError={setError} />
+        <QuoteActions quote={quote} job={job} open={false} onDelete={onDelete} refresh={refresh} onError={setError} />
         <QuotePill approved={quote.approved} />
       </div>
       {error && <p className="error" role="alert">{error}</p>}

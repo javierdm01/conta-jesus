@@ -3,7 +3,7 @@ import { jobPath } from "@/lib/job-path";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, ChevronRight, Eye, FileDown, FileText, Mail, Plus, Printer, Search } from "lucide-react";
+import { Check, ChevronRight, Eye, FileDown, FileText, Mail, Plus, Printer, Search, Trash2 } from "lucide-react";
 import type { Job, Quote } from "@/lib/workspace-types";
 import { dec } from "@/lib/money";
 import { eur, fmt } from "./invoice-list";
@@ -21,7 +21,7 @@ async function approveQuote(id: string) {
 }
 
 // Barra de acciones sobre un presupuesto (misma que la de facturas): Ver, PDF, Imprimir, Enviar y Aprobar / Facturar.
-export function QuoteActions({ quote, job, onNew, open = true, refresh, onError }: { quote?: Quote; job?: Job; onNew?: () => void; open?: boolean; refresh: () => Promise<void>; onError: (m: string) => void }) {
+export function QuoteActions({ quote, job, onNew, onDelete, open = true, refresh, onError }: { quote?: Quote; job?: Job; onNew?: () => void; onDelete?: (q: Quote) => void; open?: boolean; refresh: () => Promise<void>; onError: (m: string) => void }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const off = !quote;
@@ -57,6 +57,11 @@ export function QuoteActions({ quote, job, onNew, open = true, refresh, onError 
               setBusy(false);
             }
           })}
+      {onDelete && (
+        <button type="button" className="ib danger inv-trash" title="Eliminar presupuesto" aria-label="Eliminar presupuesto" disabled={off || busy} onClick={() => quote && onDelete(quote)}>
+          <Trash2 size={18} />
+        </button>
+      )}
     </div>
   );
 }
@@ -65,7 +70,7 @@ type Filter = "all" | "pending" | "approved";
 const FILTERS: [Filter, string][] = [["all", "Todos"], ["pending", "Pendientes"], ["approved", "Aprobados"]];
 
 // Presupuestos de todos los trabajos, con el mismo aspecto que el listado de facturas.
-export default function QuotesList({ jobs, onNew, refresh }: { jobs: Job[]; onNew: () => void; refresh: () => Promise<void> }) {
+export default function QuotesList({ jobs, onNew, onDelete, refresh }: { jobs: Job[]; onNew: () => void; onDelete?: (q: Quote) => void; refresh: () => Promise<void> }) {
   const router = useRouter();
   const [filter, setFilter] = useState<Filter>("all"),
     [q, setQ] = useState(""),
@@ -94,7 +99,7 @@ export default function QuotesList({ jobs, onNew, refresh }: { jobs: Job[]; onNe
       </nav>
       <div className="list-head">
         <h1>Presupuestos</h1>
-        <QuoteActions quote={selected?.x} job={selected?.j} onNew={onNew} refresh={refresh} onError={setError} />
+        <QuoteActions quote={selected?.x} job={selected?.j} onNew={onNew} onDelete={onDelete} refresh={refresh} onError={setError} />
         <label className="list-search">
           <Search size={16} />
           <input type="search" placeholder="Buscar presupuesto, cliente o trabajo" value={q} onChange={(e) => setQ(e.target.value)} />

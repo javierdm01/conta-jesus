@@ -18,7 +18,7 @@ export async function POST(req: Request) {
       if (!(f instanceof File) || f.size === 0 || f.size > 5_000_000) return Response.json({ error: "Audio no válido." }, { status: 400 });
       // Los nombres de tus clientes ayudan a Whisper a escribirlos bien.
       const names = await db.customer.findMany({ where: { companyId: u.companyId }, select: { name: true }, orderBy: { name: "asc" }, take: 60 });
-      text = await transcribe(u, f, names.map((x) => x.name).join(", "));
+      text = await transcribe(u, f, `Registra horas, añade material, enchufe, cable, magnetotérmico, diferencial, luminaria, presupuesto, factura, albarán. ${names.map((x) => x.name).join(", ")}`);
       // Modo conversación: solo transcribir; el cliente decide si es un sí/no o una orden nueva.
       if (new URL(req.url).searchParams.has("stt")) return Response.json({ transcript: text });
     } else {

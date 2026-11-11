@@ -7,6 +7,7 @@ import { fillEmptyCells } from "./ocr-gaps";
 import { readFiscalBox } from "./ocr-footer";
 import { uprightPage } from "./scan-page";
 import { parseOcr } from "../src/lib/ocr";
+import { GRID_TAG } from "../src/lib/ocr-grid";
 import { cents, documentLineNet, sum } from "../src/lib/money";
 
 type Run = (command: string, args: string[]) => Promise<string>;
@@ -17,6 +18,13 @@ export async function ocrImage(
   workingDirectory = path.dirname(img),
 ) {
   img = await uprightPage(img, path.join(workingDirectory, `upright-${path.parse(img).name}.png`), run);
+  // Tablas con rejilla (ofertas y albaranes de Suministros INRA / Grupo Unase): cada celda se lee por separado.
+  const grid = await run(
+    process.env.PYTHON_PATH ?? (process.platform === "win32" ? "python" : "python3"),
+    [path.resolve("scripts/ruled-table.py"), img],
+  )
+    .then((out) => JSON.parse(out) as { found: boolean; rows?: unknown[] })
+    .catch(() => null);
   const read = async (file: string, psm: string, cells = false, language="spa+eng") => {
     const tsv = await run(process.env.TESSERACT_PATH ?? "tesseract", [
       file,
@@ -191,5 +199,5 @@ export async function ocrImage(
     }[key];
     best += `\n${label} ${values[0]}`;
   }
-  return best;
+  return grid?.found && grid.rows?.length ? `${best}\n${GRID_TAG}${JSON.stringify(grid)}` : best;
 }

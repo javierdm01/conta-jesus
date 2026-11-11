@@ -37,7 +37,11 @@ export function InvoiceActions({ sale, onNew, onPayment, onDelete, open = true }
         )}`),
       )}
       {btn("Cobro", <Banknote size={18} />, () => sale && onPayment(sale))}
-      {onDelete && <span className="inv-del">{btn("Eliminar", <Trash2 size={18} />, () => sale && onDelete(sale))}</span>}
+      {onDelete && (
+        <button type="button" className="ib danger inv-trash" title="Eliminar factura" aria-label="Eliminar factura" disabled={off} onClick={() => sale && onDelete(sale)}>
+          <Trash2 size={18} />
+        </button>
+      )}
     </div>
   );
 }
