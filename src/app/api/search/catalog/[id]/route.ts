@@ -40,6 +40,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           unit: l.unit,
           price: l.price?.toString() ?? null,
           discount: l.discount.toString(),
+          net: l.net?.toString() ?? null,
         })),
       },
       { headers: { "Cache-Control": "no-store" } },

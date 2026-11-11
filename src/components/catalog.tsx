@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { ChevronLeft, ChevronRight, FileUp, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, FileUp, Plus, Search, Trash2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -11,7 +11,7 @@ import { parseSoneparJson } from "@/lib/catalog-sonepar";
 
 const PAGE = 50;
 const KIND: Record<string, string> = { DELIVERY: "Albarán", PURCHASE: "Factura de proveedor", CREDIT: "Abono" };
-type Use = { id: string; documentId: string; kind: string; number: string | null; date: string | null; supplier: string; job: { id: string; name: string } | null; quantity: string; unit: string; price: string | null; discount: string };
+type Use = { id: string; documentId: string; kind: string; number: string | null; date: string | null; supplier: string; job: { id: string; name: string } | null; quantity: string; unit: string; price: string | null; discount: string; net: string | null };
 const day = (d: string | null) => (d ? new Date(d).toLocaleDateString("es-ES") : "—");
 
 // En qué albaranes y facturas de proveedor aparece el artículo, con el precio pagado en cada compra.
@@ -25,26 +25,30 @@ function Usage({ id }: { id: string }) {
   if (error) return <p className="error">{error.message}</p>;
   if (!data) return <Spinner />;
   if (!data.uses.length) return <p className="small-note">Todavía no aparece en ningún albarán ni factura (se busca por su referencia).</p>;
-  const prices = data.uses.map((x) => Number(x.price)).filter((x) => x > 0);
-  const last = data.uses.find((x) => Number(x.price) > 0);
+  // Precio unitario neto pagado (importe de la línea entre unidades); los abonos devuelven material y no fijan precio.
+  const unit = (x: Use) => (x.net !== null && Number(x.quantity) > 0 ? Number(x.net) / Number(x.quantity) : x.price ? Number(x.price) * (1 - Number(x.discount) / 100) : 0);
+  const paid = data.uses.filter((x) => x.kind !== "CREDIT" && unit(x) > 0).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+  const prices = paid.map(unit);
+  const last = paid[0];
+  const price = (n: number) => (n < 1 ? `${n.toFixed(4).replace(".", ",")} €` : eur(String(n)));
   return (
     <>
       {prices.length > 0 && (
         <p className="small-note">
-          Último precio pagado: <b>{eur(String(last!.price))}</b> ({day(last!.date)}) · mínimo {eur(String(Math.min(...prices)))} · máximo {eur(String(Math.max(...prices)))} · {data.uses.length} compras
+          Último precio unitario pagado: <b>{price(unit(last))}</b> ({day(last.date)}) · mínimo {price(Math.min(...prices))} · máximo {price(Math.max(...prices))} · {paid.length} compras
         </p>
       )}
       <table>
-        <thead><tr><th>Fecha</th><th>Documento</th><th>Proveedor</th><th>Trabajo</th><th>Cantidad</th><th>Precio</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Documento</th><th>Proveedor</th><th>Trabajo</th><th>Cantidad</th><th>Precio unitario</th></tr></thead>
         <tbody>
           {data.uses.map((x) => (
             <tr key={x.id}>
               <td>{day(x.date)}</td>
-              <td>{KIND[x.kind] ?? x.kind} {x.number ?? ""}</td>
+              <td><a href={`/api/documents/${x.documentId}?inline=1`} target="_blank" rel="noreferrer" className="job-link">{KIND[x.kind] ?? x.kind} {x.number ?? ""}</a></td>
               <td>{x.supplier || "—"}</td>
               <td>{x.job?.name ?? "—"}</td>
               <td>{Number(x.quantity)} {x.unit}</td>
-              <td>{x.price ? `${eur(x.price)}${Number(x.discount) ? ` (−${Number(x.discount)} %)` : ""}` : "—"}</td>
+              <td>{unit(x) > 0 ? <>{price(unit(x))}{x.kind === "CREDIT" ? " (abono)" : ""}{Number(x.discount) ? <small className="muted"> · lista {eur(x.price!)} −{Number(x.discount)} %</small> : null}</> : "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -134,6 +138,9 @@ export default function Catalog() {
           <Button variant="outline" loading={busy} onClick={() => file.current?.click()}>
             <FileUp size={16} /> Importar CSV o Sonepar
           </Button>
+          <a className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50" href="/api/search/catalog/export">
+            <Download size={16} /> Descargar CSV
+          </a>
           <Button onClick={() => setAdding(true)}><Plus size={16} /> Añadir artículo</Button>
           <input ref={file} type="file" accept=".csv,.json,text/csv,text/plain,application/json" hidden onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
         </div>
