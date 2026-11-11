@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileUp, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ExternalLink, FileUp, Plus, Search, Trash2, ZapOff } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -13,6 +13,20 @@ import { soneparSearchUrl, variation } from "@/lib/catalog-links";
 const PAGE = 50;
 const KIND: Record<string, string> = { DELIVERY: "Albarán", PURCHASE: "Factura de proveedor", CREDIT: "Abono" };
 type Use = { id: string; documentId: string; kind: string; number: string | null; date: string | null; supplier: string; job: { id: string; name: string } | null; quantity: string; unit: string; price: string | null; discount: string; net: string | null };
+// Foto del artículo; sin foto o si no carga, un rayo tachado en una caja del mismo tamaño para que no cambien las medidas.
+function Thumb({ src }: { src?: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span className="cat-thumb" aria-hidden={!src || failed}>
+      {src && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
+      ) : (
+        <ZapOff size={22} aria-label="Sin imagen" />
+      )}
+    </span>
+  );
+}
 const day = (d: string | null) => (d ? new Date(d).toLocaleDateString("es-ES") : "—");
 
 // En qué albaranes y facturas de proveedor aparece el artículo, con el precio pagado en cada compra.
@@ -39,17 +53,17 @@ function Usage({ id }: { id: string }) {
           Último precio unitario pagado: <b>{price(unit(last))}</b> ({day(last.date)}) · mínimo {price(Math.min(...prices))} · máximo {price(Math.max(...prices))} · {paid.length} compras
         </p>
       )}
-      <table>
+      <table className="usage-table">
         <thead><tr><th>Fecha</th><th>Documento</th><th>Proveedor</th><th>Trabajo</th><th>Cantidad</th><th>Precio unitario</th></tr></thead>
         <tbody>
           {data.uses.map((x) => (
             <tr key={x.id}>
-              <td>{day(x.date)}</td>
-              <td><a href={`/api/documents/${x.documentId}?inline=1`} target="_blank" rel="noreferrer" className="job-link">{KIND[x.kind] ?? x.kind} {x.number ?? ""}</a></td>
-              <td>{x.supplier || "—"}</td>
-              <td>{x.job?.name ?? "—"}</td>
-              <td>{Number(x.quantity)} {x.unit}</td>
-              <td>{unit(x) > 0 ? <>{price(unit(x))}{x.kind === "CREDIT" ? " (abono)" : ""}{Number(x.discount) ? <small className="muted"> · lista {eur(x.price!)} −{Number(x.discount)} %</small> : null}</> : "—"}</td>
+              <td data-label="Fecha">{day(x.date)}</td>
+              <td data-label="Documento"><a href={`/api/documents/${x.documentId}?inline=1`} target="_blank" rel="noreferrer" className="job-link">{KIND[x.kind] ?? x.kind} {x.number ?? ""}</a></td>
+              <td data-label="Proveedor">{x.supplier || "—"}</td>
+              <td data-label="Trabajo">{x.job?.name ?? "—"}</td>
+              <td data-label="Cantidad">{Number(x.quantity)} {x.unit}</td>
+              <td data-label="Precio unitario">{unit(x) > 0 ? <><b>{price(unit(x))}</b>{x.kind === "CREDIT" ? " (abono)" : ""}{Number(x.discount) ? <small className="muted" style={{ display: "block" }}>lista {eur(x.price!)} −{Number(x.discount)} %</small> : null}</> : "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -175,14 +189,18 @@ export default function Catalog() {
                 {data.items.map((i) => (
                   <Fragment key={i.id}>
                   <tr className="cat-row" style={{ cursor: "pointer" }} onClick={() => setOpen(open === i.id ? "" : i.id)} aria-expanded={open === i.id}>
-                    <td style={{ whiteSpace: "normal", minWidth: 280 }}>
-                      {i.imageUrl && /* eslint-disable-next-line @next/next/no-img-element */ <img src={i.imageUrl} alt="" loading="lazy" width={48} height={48} style={{ float: "left", marginRight: 12, borderRadius: 8, objectFit: "contain", background: "#fff" }} />}
-                      {i.description}
-                      <small className="muted" style={{ display: "block" }}>
-                        {[i.reference, i.supplierRef && i.supplierRef !== i.reference ? `Ref. prov. ${i.supplierRef}` : "", i.brand, i.supplier].filter(Boolean).join(" · ")}
-                      </small>
+                    <td style={{ whiteSpace: "normal" }}>
+                      <div className="cat-art">
+                        <div className="cat-art-top">
+                          <Thumb src={i.imageUrl} />
+                          <span>{i.description}</span>
+                        </div>
+                        <small className="muted">
+                          {[i.reference && `Ref. ${i.reference}`, i.supplierRef && i.supplierRef !== i.reference ? `Ref. prov. ${i.supplierRef}` : "", i.brand, i.supplier].filter(Boolean).join(" · ")}
+                        </small>
+                      </div>
                     </td>
-                    <td data-label="Pagado (último)" style={{ whiteSpace: "nowrap" }}>{Number(i.price) > 0 ? <><b>{eur(i.price)}</b><small className="muted"> / {i.unit}</small></> : <span className="muted">Sin precio</span>}</td>
+                    <td data-label="Pagado (último)" style={{ whiteSpace: "nowrap" }}>{Number(i.price) > 0 ? <span className="price-box"><b>{eur(i.price)}</b><small className="muted">/ {i.unit}</small></span> : <span className="muted">Sin precio</span>}</td>
                     <td data-label="Hoy en Sonepar" style={{ whiteSpace: "nowrap" }}>{i.currentPrice ? <b>{eur(i.currentPrice)}</b> : <span className="muted">—</span>}</td>
                     <td data-label="Variación">
                       {(() => {
@@ -210,7 +228,7 @@ export default function Catalog() {
                       </button>
                     </td>
                   </tr>
-                  {open === i.id && <tr className="cat-detail"><td colSpan={5} style={{ whiteSpace: "normal" }}><b>Dónde aparece</b><div style={{ overflowX: "auto" }}><Usage id={i.id} /></div></td></tr>}
+                  {open === i.id && <tr className="cat-detail"><td colSpan={5} style={{ whiteSpace: "normal" }}><b>Dónde aparece</b><Usage id={i.id} /></td></tr>}
                   </Fragment>
                 ))}
               </tbody>

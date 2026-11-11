@@ -13,6 +13,7 @@ export async function POST(req: Request) {
     limit(`voice:${u.id}`, 30);
     let text = "";
     let history: { who: string; text: string }[] = [];
+    let extra: { pick?: string; lastCustomer?: string } = {};
     if (req.headers.get("content-type")?.includes("multipart/form-data")) {
       const f = (await req.formData()).get("audio");
       if (!(f instanceof File) || f.size === 0 || f.size > 5_000_000) return Response.json({ error: "Audio no válido." }, { status: 400 });
@@ -24,10 +25,11 @@ export async function POST(req: Request) {
     } else {
       const b = await req.json();
       text = String(b.text ?? "").slice(0, 500);
+      extra = { pick: b.pick ? String(b.pick).slice(0, 120) : undefined, lastCustomer: b.lastCustomer ? String(b.lastCustomer).slice(0, 120) : undefined };
       history = Array.isArray(b.history) ? b.history.slice(-6).map((h: { who?: unknown; text?: unknown }) => ({ who: String(h.who ?? ""), text: String(h.text ?? "").slice(0, 400) })) : [];
     }
     if (!text.trim()) return Response.json({ transcript: "", message: "No he oído nada. Inténtalo de nuevo." });
-    return Response.json(await interpret(u, text, history));
+    return Response.json(await interpret(u, text, history, extra));
   } catch (e) {
     return apiError(e);
   }

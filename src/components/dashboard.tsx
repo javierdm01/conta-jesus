@@ -968,13 +968,34 @@ export function Dashboard({
       setToast("Presupuesto eliminado.");
       if (pathname.startsWith("/presupuestos/")) router.push("/presupuestos");
     });
-  const deleteCustomer = (c: Customer) =>
-    confirmThen("¿Eliminar el cliente?", `Se borrará «${c.name}». Solo es posible si no tiene trabajos; si los tiene, se conserva para no perder la contabilidad.`, "Sí, eliminar", async () => {
-      await request("/api/operations/customerDelete", { id: c.id });
+  const deleteCustomer = (c: Customer) => {
+    const done = async () => {
       await load();
       setToast("Cliente eliminado.");
       if (pathname.startsWith("/clientes/")) router.push("/clientes");
+    };
+    confirmThen("¿Eliminar el cliente?", `Se borrará «${c.name}». Solo es posible si no tiene trabajos; si los tiene, se conserva para no perder la contabilidad.`, "Sí, eliminar", async () => {
+      try {
+        await request("/api/operations/customerDelete", { id: c.id });
+      } catch (e) {
+        // Con trabajos: el responsable puede borrarlo todo de forma definitiva, tras una segunda confirmación.
+        if (isAdmin && /No se puede borrar/.test((e as Error).message)) {
+          setAsk({
+            title: "¿Eliminar definitivamente?",
+            message: `${(e as Error).message.replace(/ Para no perder.*$/, "")} ¿Quieres borrar «${c.name}» y TODO lo asociado: sus trabajos, facturas de venta, presupuestos, horas, costes, equipos y contratos? Las facturas de proveedor y los movimientos de almacén se conservan sin trabajo asignado. NO se puede deshacer.`,
+            label: "Sí, borrar todo definitivamente",
+            run: async () => {
+              await request("/api/operations/customerDelete", { id: c.id, cascade: true });
+              await done();
+            },
+          });
+          return;
+        }
+        throw e;
+      }
+      await done();
     });
+  };
   const deleteSupplier = (x: Supplier) =>
     confirmThen("¿Eliminar el proveedor?", `Se borrará «${x.name}». Solo es posible si no tiene documentos ni pedidos.`, "Sí, eliminar", async () => {
       await request("/api/operations/supplierDelete", { id: x.id });
@@ -3060,8 +3081,9 @@ export function Dashboard({
           if (!ask) return;
           setAskBusy(true);
           try {
-            await ask.run();
-            setAsk(null);
+            const cur = ask;
+            await cur.run();
+            setAsk((x) => (x === cur ? null : x)); // si run() abrió otra confirmación, se respeta
           } catch (e) {
             setAsk(null);
             setError((e as Error).message);

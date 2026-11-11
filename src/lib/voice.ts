@@ -9,7 +9,7 @@ import { validateSql } from "@/lib/ai-sql";
 
 export type Proposal = { text: string; summary: string; action: string; payload: Record<string, unknown> };
 export type ListItem = { label: string; detail?: string; href?: string };
-export type Reply = { transcript: string; proposal?: Proposal; message?: string; list?: { title: string; items: ListItem[] } };
+export type Reply = { transcript: string; proposal?: Proposal; message?: string; list?: { title: string; items: ListItem[] }; ask?: { options: string[] } };
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 /** Fecha hablada → YYYY-MM-DD (hoy si no se dijo nada). */
@@ -285,13 +285,24 @@ export async function transcribe(u: Actor, audio: File, hint = "") {
 }
 
 export type Turn = { who: string; text: string };
-export async function interpret(u: Actor, transcript: string, history: Turn[] = []): Promise<Reply> {
-  const r = await interpretOrder(u, transcript, history);
+export type Extra = { pick?: string; lastCustomer?: string };
+export async function interpret(u: Actor, transcript: string, history: Turn[] = [], extra: Extra = {}): Promise<Reply> {
+  const r = await interpretOrder(u, transcript, history, extra);
   await recordVoice(u, { kind: "REPLY", transcript, result: r.proposal ? `Propone: ${r.proposal.summary}` : (r.message ?? "") });
   return r;
 }
 
-async function interpretOrder(u: Actor, transcript: string, history: Turn[]): Promise<Reply> {
+// Cliente dicho en voz → uno solo (nombre exacto), varios que encajan (hay que preguntar) o ninguno.
+function pickCustomer(q: string, names: string[]): { name?: string; options?: string[] } {
+  const k = plainText(q),
+    exact = [...new Set(names.filter((x) => plainText(x) === k))];
+  if (exact.length === 1) return { name: exact[0] };
+  const hits = [...new Set(names.filter((x) => matchesSearch(q, [x])))];
+  if (hits.length === 1) return { name: hits[0] };
+  return hits.length ? { options: hits.slice(0, 6) } : {};
+}
+
+async function interpretOrder(u: Actor, transcript: string, history: Turn[], extra: Extra = {}): Promise<Reply> {
   const [custs, openJobs] = await Promise.all([
     db.customer.findMany({ where: { companyId: u.companyId }, select: { name: true }, orderBy: { name: "asc" }, take: 300 }),
     db.job.findMany({ where: { companyId: u.companyId, archivedAt: null }, select: { name: true, customer: { select: { name: true } } }, orderBy: { openedAt: "desc" }, take: 12 }),
@@ -313,6 +324,21 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[]): Pr
   }
   if (!intent) return { transcript, message: (llmBroken() ? "El asistente avanzado no está activo (la clave de OpenAI no es válida; avisa al responsable). " : "") + "No he entendido la orden. Prueba, por ejemplo: «créame al cliente Francisco»." };
   const companyId = u.companyId;
+
+  // Cliente: el elegido en pantalla manda; si el nombre encaja con varios se pregunta y si no se dijo, se usa el último del chat.
+  const withCustomer = intent as { customer?: string };
+  if (!["query", "find", "contact", "overhead"].includes(intent.action) && ("customer" in intent || (intent.action as string) === "job")) {
+    if (extra.pick) withCustomer.customer = extra.pick;
+    else if (!withCustomer.customer && (intent.action as string) === "job") {
+      if (extra.lastCustomer) withCustomer.customer = extra.lastCustomer;
+      else return { transcript, message: "¿Para qué cliente es el trabajo?", ask: { options: names.slice(0, 6) } };
+    }
+    if (withCustomer.customer) {
+      const hit = pickCustomer(withCustomer.customer, names);
+      if (hit.options) return { transcript, message: `Hay ${hit.options.length} clientes que encajan con «${withCustomer.customer}»: ${hit.options.join(", ")}. ¿Cuál es?`, ask: { options: hit.options } };
+      if (hit.name) withCustomer.customer = hit.name;
+    }
+  }
 
   if (intent.action === "hours" || intent.action === "material" || intent.action === "status") {
     const mine = u.worker?.id;

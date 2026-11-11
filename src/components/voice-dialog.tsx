@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import type { Proposal } from "@/lib/voice";
 
 type ListData = { title: string; items: { label: string; detail?: string; href?: string }[] };
-type Reply = { transcript?: string; proposal?: Proposal; message?: string; error?: string; list?: ListData };
+type Reply = { transcript?: string; proposal?: Proposal; message?: string; error?: string; list?: ListData; ask?: { options: string[] } };
 type Phase = "idle" | "listening" | "thinking" | "speaking";
 type Line = { who: "tú" | "asistente"; text: string; list?: ListData };
 
@@ -31,11 +31,21 @@ const loadPrefs = (): Prefs => {
   } catch {}
   return { voice: "k-dora", speed: 1 };
 };
+const CHAT_KEY = "instala-voice-chat";
+const loadChat = (): Line[] => {
+  try {
+    const c = JSON.parse(localStorage.getItem(CHAT_KEY) ?? "null");
+    return c && Date.now() - c.at < 7 * 864e5 && Array.isArray(c.log) ? c.log : [];
+  } catch {
+    return [];
+  }
+};
+const ORDINAL: [RegExp, number][] = [[/(primer[oa]?|1)/, 0], [/(segund[oa]|2)/, 1], [/(tercer[oa]?|3)/, 2], [/(cuart[oa]|4)/, 3]];
 const FIXED = ["Hecho, guardado.", "Vale, lo dejo sin guardar."];
 const LABEL: Record<Phase, string> = { idle: "Toca el micrófono para hablar", listening: "Te escucho… toca para enviar", thinking: "Pensando…", speaking: "Hablando…" };
 const STATUS: Record<Phase, string> = { idle: "Listo", listening: "Escuchando…", thinking: "Pensando…", speaking: "Hablando…" };
 // Sugerencias tipo Copilot: lo que suele venir después de cada acción. «▮» marca dónde queda el cursor si el texto se completa a mano.
-type Chip = { label: string; text: string; fill?: boolean; admin?: boolean; flow?: "hours" | "material"; customer?: string };
+type Chip = { label: string; text: string; fill?: boolean; admin?: boolean; flow?: "hours" | "material"; customer?: string; pick?: string };
 const C = (label: string, text = label, o: Partial<Chip> = {}): Chip => ({ label, text, ...o });
 const SUGGESTIONS: Chip[] = [
   C("¿Cuánto me deben?", "¿Cuánto me deben en total?", { admin: true }),
@@ -125,6 +135,16 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
   const audio = useRef<HTMLAudioElement | null>(null);
   const stopRec = useRef<{ send: () => void; cancel: () => void } | null>(null);
   const flow = useRef<Flow | null>(null);
+  const retry = useRef<{ text: string; options: string[] } | null>(null); // orden que espera saber qué cliente es
+  const lastCustomer = useRef<string | undefined>(undefined);
+  const [saved, setSaved] = useState<Line[]>([]);
+  useEffect(() => setSaved(loadChat()), []);
+  useEffect(() => {
+    if (!log.length) return;
+    try {
+      localStorage.setItem(CHAT_KEY, JSON.stringify({ at: Date.now(), log: log.slice(-30).map(({ who, text }) => ({ who, text })) }));
+    } catch {}
+  }, [log]);
   const player = useRef<HTMLAudioElement | null>(null); // un solo <audio>: iOS solo deja sonar el que se «desbloqueó» con un toque
   const ctxRef = useRef<AudioContext | null>(null); // un solo AudioContext, creado con un toque (en Safari un contexto nuevo nace en pausa)
   const unlocked = useRef(false);
@@ -273,7 +293,21 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
     }
     return compose(said === "__last" ? undefined : said);
   };
-  const handle = async (said: string, keepListening: boolean, echo = true): Promise<void> => {
+  const handle = async (said: string, keepListening: boolean, echo = true, pick?: string): Promise<void> => {
+    // Si se preguntó «¿cuál?», lo que se diga ahora (nombre, «el segundo») elige cliente y se repite la orden original.
+    if (!pick && retry.current) {
+      const n = plain(said),
+        { text: orig, options } = retry.current;
+      const byName = options.filter((o) => plain(o).split(/\s+/).some((w) => w.length > 2 && n.includes(w)));
+      const at = ORDINAL.find(([re]) => re.test(n))?.[1];
+      const choice = byName.length === 1 ? byName[0] : at !== undefined ? options[at] : undefined;
+      if (choice) {
+        setLog((l) => [...l, { who: "tú", text: said }]);
+        setFollow([]);
+        return handle(orig, keepListening, false, choice);
+      }
+      retry.current = null;
+    }
     if (echo) {
       setLog((l) => [...l, { who: "tú", text: said }]);
       setFollow([]);
@@ -307,9 +341,18 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
     }
     setPhase("thinking");
     try {
-      const r = await fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: said, history: log.slice(-6).map((l) => ({ who: l.who, text: l.text })) }) });
+      const r = await fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: said, pick, lastCustomer: lastCustomer.current, history: log.slice(-6).map((l) => ({ who: l.who, text: l.text })) }) });
       const d: Reply = await r.json();
+      retry.current = null;
+      if (pick) lastCustomer.current = pick;
+      if (d.ask) {
+        retry.current = { text: said, options: d.ask.options };
+        setFollow(d.ask.options.map((o) => C(o, o, { pick: o })));
+        return say(d.message ?? "¿Cuál?", next);
+      }
       if (d.proposal) {
+        const c = /(?:para|·) ([^·]+?)(?: ·|$)/.exec(d.proposal.summary)?.[1];
+        if (pick || c) lastCustomer.current ??= pick ?? c;
         pending.current = d.proposal;
         return say(`${d.proposal.summary}. ¿Lo guardo?`, next);
       }
@@ -439,6 +482,11 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
       setLog((l) => [...l, { who: "tú", text: c.label }]);
       return startFlow(c.flow, c.customer, false);
     }
+    if (c.pick && retry.current) {
+      setLog((l) => [...l, { who: "tú", text: c.label }]);
+      setFollow([]);
+      return handle(retry.current.text, false, false, c.pick);
+    }
     if (!c.fill) return handle(c.text, false);
     const at = c.text.indexOf("▮");
     setText(c.text.replace("▮", ""));
@@ -496,6 +544,16 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
               <span className="va-avatar big"><Sparkles size={28} /></span>
               <h2>¿En qué te ayudo?</h2>
               <p>Pregúntame lo que quieras de tus clientes, trabajos, facturas o almacén, o dime qué apuntar.</p>
+              {saved.length > 0 && (
+                <div className="va-resume">
+                  <p>¿Quieres reanudar la última conversación?</p>
+                  <small>«{saved[saved.length - 1].text.slice(0, 80)}»</small>
+                  <div>
+                    <Button onClick={() => (setLog(saved), setSaved([]))}>Reanudar</Button>
+                    <Button variant="outline" onClick={() => { setSaved([]); try { localStorage.removeItem(CHAT_KEY); } catch {} }}>Empezar de cero</Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {log.map((l, i) => (

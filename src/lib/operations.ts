@@ -417,10 +417,30 @@ export async function operate(u: Actor, action: string, input: unknown) {
   }
   if (action === "customerDelete") {
     admin(u);
-    const { id } = z.object({ id: v.id }).parse(input);
+    const { id, cascade } = z.object({ id: v.id, cascade: z.boolean().optional() }).parse(input);
     return serial(async (tx) => {
       const c = await tx.customer.findFirst({ where: { id, companyId }, include: { _count: { select: { jobs: true, equipment: true, contracts: true } } } });
       if (!c) throw new AppError("Cliente no encontrado.", 404);
+      if (cascade) {
+        // Borrado definitivo: trabajos con sus facturas, presupuestos, horas, costes y reservas. Las facturas de proveedor y los movimientos
+        // de almacén se conservan (el material ya se compró y se gastó) pero quedan sin trabajo asignado.
+        const jobIds = (await tx.job.findMany({ where: { customerId: id, companyId }, select: { id: true } })).map((j) => j.id);
+        const where = { jobId: { in: jobIds } };
+        await tx.document.updateMany({ where: { companyId, jobId: { in: jobIds } }, data: { jobId: null } });
+        await tx.documentLine.updateMany({ where, data: { jobId: null } });
+        await tx.stockMovement.updateMany({ where, data: { jobId: null } });
+        await tx.cost.deleteMany({ where });
+        await tx.stockReservation.deleteMany({ where });
+        await tx.timeEntry.deleteMany({ where });
+        await tx.sale.deleteMany({ where });
+        await tx.quote.deleteMany({ where });
+        await tx.job.deleteMany({ where: { id: { in: jobIds } } });
+        await tx.equipment.deleteMany({ where: { customerId: id } });
+        await tx.maintenanceContract.deleteMany({ where: { customerId: id } });
+        await tx.customer.delete({ where: { id } });
+        await audit(tx, u, `Eliminar definitivamente cliente ${c.name} (${jobIds.length} trabajos)`, id);
+        return { id };
+      }
       const used = [c._count.jobs && `${c._count.jobs} trabajo(s)`, c._count.equipment && `${c._count.equipment} equipo(s)`, c._count.contracts && `${c._count.contracts} contrato(s)`].filter(Boolean);
       if (used.length) throw new AppError(`No se puede borrar: tiene ${used.join(", ")} (con sus facturas, horas y material). Para no perder la contabilidad, el cliente se conserva.`);
       await tx.customer.delete({ where: { id } });
