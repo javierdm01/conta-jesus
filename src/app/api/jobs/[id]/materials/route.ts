@@ -3,13 +3,15 @@ import { db } from "@/lib/db";
 import { apiError } from "@/lib/api-error";
 import { dec, cents, sum } from "@/lib/money";
 
-// Material gastado en el trabajo y todavía sin facturar, con precio de venta sugerido (coste + 30 %).
+// Material gastado en el trabajo y todavía sin facturar, con precio de venta sugerido (coste + margen de la empresa).
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const u = await currentUser();
     admin(u);
     const { id } = await params;
     await accessibleJob(u, id);
+    const company = await db.company.findUniqueOrThrow({ where: { id: u.companyId }, select: { defaultMargin: true } });
+    const markup = dec(1).plus(dec(company.defaultMargin.toString()).div(100));
     const [moves, billed] = await Promise.all([
       db.stockMovement.findMany({
         where: { companyId: u.companyId, jobId: id, kind: { in: ["USE", "RETURN"] } },
@@ -29,8 +31,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const done = sum(billed.filter((b) => b.lotId === lotId).map((b) => b.quantity.toString()));
       const pending = x.qty.minus(done);
       if (pending.lte(0)) return [];
-      // Precio unitario sugerido: coste medio de lo gastado + 30 %.
-      const price = x.qty.gt(0) && x.cost.gt(0) ? cents(x.cost.div(x.qty).mul("1.30")) : "0.00";
+      // Precio unitario sugerido: coste medio de lo gastado + margen de la empresa.
+      const price = x.qty.gt(0) && x.cost.gt(0) ? cents(x.cost.div(x.qty).mul(markup)) : "0.00";
       return [{
         lotId,
         description: x.lot.alias || x.lot.description,

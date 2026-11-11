@@ -338,6 +338,30 @@ export async function inventoryOperation(
             family: productFamily(first.description),
           },
         });
+        // Todo lo que entra al almacén queda también en el catálogo (si no estaba ya).
+        const known = await tx.catalogItem.findFirst({
+          where: {
+            companyId: u.companyId,
+            OR: first.reference
+              ? [{ reference: { equals: first.reference, mode: "insensitive" } }, { supplierRef: { equals: first.reference, mode: "insensitive" } }]
+              : [{ description: { equals: first.description, mode: "insensitive" } }],
+          },
+          select: { id: true },
+        });
+        if (!known) {
+          const sup = await tx.supplier.findFirst({ where: { id: d.supplierId, companyId: u.companyId }, select: { name: true } });
+          await tx.catalogItem.create({
+            data: {
+              companyId: u.companyId,
+              reference: first.reference,
+              description: first.description,
+              brand: first.brand,
+              unit: first.unit,
+              price: net && dec(quantity).gt(0) ? dec(net.toString()).div(quantity).toFixed(4) : "0",
+              supplier: sup?.name ?? "",
+            },
+          });
+        }
         await tx.documentLine.createMany({
           data: group.map((l) => ({
             documentId: doc.id,

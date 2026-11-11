@@ -15,6 +15,7 @@ import {
   Settings,
   Search,
   Plus,
+  Menu as MenuIcon,
   ArrowUpRight,
   ArrowLeft,
   Camera,
@@ -66,6 +67,8 @@ const ExpenseForm = dynamic(() => import("./expenses").then((m) => m.ExpenseForm
 import { AppSkeleton, PageSkeleton } from "./skeletons";
 import { QuoteBuilder } from "./quote-builder";
 import { MaterialPicker } from "./material-picker";
+import { StatusFilter, pillTone } from "./status-filter";
+import { AssistantFab } from "./assistant-fab";
 import { PersonPicker, type Person } from "./person-picker";
 import { uploadDocument } from "@/lib/optimize-upload";
 const Catalog = dynamic(() => import("./catalog"), { loading: () => <PageSkeleton /> });
@@ -78,6 +81,7 @@ const AnalyticsHome = dynamic(() => import("./analytics-home"), { ssr: false, lo
 const ContactsHub = dynamic(() => import("./contacts-hub"), { loading: () => <PageSkeleton /> });
 const SalesHub = dynamic(() => import("./sales-hub"), { loading: () => <PageSkeleton /> });
 const InvoiceList = dynamic(() => import("./invoice-list"), { loading: () => <PageSkeleton /> });
+const QuoteDetail = dynamic(() => import("./quote-detail"), { loading: () => <PageSkeleton /> });
 const InvoiceDetail = dynamic(() => import("./invoice-detail"), { loading: () => <PageSkeleton /> });
 const QuotesList = dynamic(() => import("./quotes-list"), { loading: () => <PageSkeleton /> });
 const Hours = dynamic(() => import("./hours"), { loading: () => <PageSkeleton /> });
@@ -154,15 +158,24 @@ const nav = [
   { href: "/contactos", label: "Clientes y proveedores", icon: Users },
   { href: "/facturas", label: "Documentos", icon: Files },
   { href: "/inventario", label: "Almacén", icon: Package },
-  { href: "/beneficios", label: "Beneficios", icon: ChartNoAxesCombined },
-  { href: "/horas", label: "Horas", icon: Clock },
-  { href: "/gastos", label: "Gastos", icon: Wallet },
-  { href: "/catalogo", label: "Catálogo", icon: BookOpen },
-  { href: "/calendario", label: "Calendario fiscal", icon: CalendarDays },
-  { href: "/trimestres", label: "Trimestres", icon: Calculator },
+  { href: "/beneficios", label: "Datos", icon: ChartNoAxesCombined },
+  { href: "/trimestres", label: "Fiscalidad", icon: Calculator },
+  { href: "/registros", label: "Registros", icon: Files, adminOnly: true },
   { href: "/configuracion", label: "Configuración", icon: Settings },
+  // Sin entrada propia en el menú: se llega desde Datos, Ventas o los trabajos (y desde los accesos de inicio).
+  { href: "/horas", label: "Horas", icon: Clock, hidden: true },
+  { href: "/gastos", label: "Gastos", icon: Wallet, hidden: true },
+  { href: "/catalogo", label: "Catálogo", icon: BookOpen, hidden: true },
+  { href: "/calendario", label: "Calendario fiscal", icon: CalendarDays, hidden: true },
 ];
 // Cuatro destinos principales; lo demás va en el menú del perfil (2 clics).
+// Pestañas dentro de cada apartado (en vez de una entrada de menú por pantalla).
+const subTabs: Record<string, { href: string; label: string }[]> = {
+  datos: [{ href: "/beneficios", label: "Resumen" }, { href: "/horas", label: "Horas" }, { href: "/gastos", label: "Gastos" }],
+  fiscal: [{ href: "/trimestres", label: "Trimestres" }, { href: "/calendario", label: "Calendario fiscal" }],
+};
+// Barra inferior del móvil: lo que no está aquí se encuentra en «Menú».
+const bottomHrefs = ["/", "/trabajos", "/inventario", "/ventas"];
 const primaryHrefs = ["/", "/trabajos", "/ventas", "/contactos", "/inventario", "/facturas"];
 const kindLabel: Record<string, string> = {
   AUTO: "Documento (detectando tipo)",
@@ -185,7 +198,7 @@ function Pill({ children }: { children: React.ReactNode }) {
   const text = String(children);
   return (
     <span
-      className={`pill ${/En proceso|Leyendo/.test(text) ? "blue" : /Finalizado|Facturado|Cobrado|Confirmado|Aprobado|guardada/.test(text) ? "green" : /Pendiente|cola|atención/.test(text) ? "orange" : ""}`}
+      className={`pill ${pillTone(text)}`}
     >
       {children}
     </span>
@@ -303,6 +316,9 @@ export function Dashboard({
     [sort, setSort] = useState("gross");
   const router = useRouter();
   const [documentView, setDocumentView] = useState("all");
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [auditsOpen, setAuditsOpen] = useState(false);
+  const [confirmFinish, setConfirmFinish] = useState(false);
   const [searchScope, setSearchScope] = useState("all");
   const [selectedDocs, setSelectedDocs] = useState<string[]>([]);
   const [deletingDocs, setDeletingDocs] = useState(false);
@@ -450,14 +466,16 @@ export function Dashboard({
   const activeJobs = s.jobs.filter((j) => !j.archivedAt);
   // Ventas agrupa sus pantallas (facturas, presupuestos, cobros, catálogo…); el resto, por su primer segmento.
   const navGroups: Record<string, string[]> = {
-    ventas: ["ventas", "facturas-venta", "nueva-factura", "cobros", "presupuestos", "catalogo"],
+    ventas: ["ventas", "facturas-venta", "nueva-factura", "nuevo-presupuesto", "cobros", "presupuestos", "catalogo"],
     contactos: ["contactos", "clientes", "proveedores", "cuentas", "pedidos"],
+    beneficios: ["beneficios", "horas", "gastos"],
+    trimestres: ["trimestres", "calendario"],
   };
   const navActive = (href: string) =>
     href === "/" ? pathname === "/" : (navGroups[href.slice(1)] ?? [href.slice(1)]).includes(pathname.split("/")[1]);
   const visibleNav = isAdmin
-    ? nav
-    : nav.filter(
+    ? nav.filter((n) => !n.hidden)
+    : nav.filter((n) => !n.adminOnly && !n.hidden).filter(
         (n) =>
           n.href === "/" ||
           n.href === "/trabajos" ||
@@ -570,6 +588,10 @@ export function Dashboard({
                 (existing as Customer)?.address ?? "",
                 false,
               ),
+              {
+                ...field("hourlyRate", "Precio por hora al cliente (€)", "number", Number((existing as Customer)?.hourlyRate) > 0 ? (existing as Customer).hourlyRate! : "", false),
+                hint: "Se usa al facturar las horas de sus trabajos. Vacío = coste medio + 30 %.",
+              },
             ]
           : [
               field(
@@ -763,7 +785,7 @@ export function Dashboard({
       ],
     });
   const openInvoice = () => router.push(selected?.id ? `/nueva-factura/${selected.id}` : "/nueva-factura");
-  const createQuote = () => setQuoteBuilder(true);
+  const createQuote = () => router.push(selected?.id ? `/nuevo-presupuesto/${selected.id}` : "/nuevo-presupuesto");
   const createSale = (doc?: Doc, product?: SaleProduct) => {
     setReview(null);
     setModal({
@@ -805,6 +827,63 @@ export function Dashboard({
         },
       ],
     });
+  // Menú «+»: los mismos módulos que la barra lateral y, dentro de cada uno, lo más importante.
+  type ModItem = { key?: string; href?: string; label: string; icon: typeof Plus; main?: boolean };
+  const navIcon = (href: string) => nav.find((n) => n.href === href)!.icon;
+  const modules: { href: string; label: string; hint: string; icon: typeof Plus; items: ModItem[] }[] = (isAdmin
+    ? [
+        { href: "/trabajos", label: "Trabajos", hint: "Crear y registrar", items: [
+          { key: "job", label: "Nuevo trabajo", icon: BriefcaseBusiness, main: true },
+          { key: "hours", label: "Registrar horas", icon: Clock },
+          { key: "cost", label: "Material usado", icon: Package },
+          { key: "photo", label: "Añadir fotografía", icon: Camera },
+        ] },
+        { href: "/ventas", label: "Ventas", hint: "Facturas y presupuestos", items: [
+          { href: "/nueva-factura", label: "Nueva factura", icon: FileCheck2 },
+          { href: "/nuevo-presupuesto", label: "Nuevo presupuesto", icon: FilePlus2 },
+          { href: "/facturas-venta", label: "Facturas", icon: Receipt },
+          { href: "/presupuestos", label: "Presupuestos", icon: FilePlus2 },
+          { href: "/cobros", label: "Cobros", icon: Wallet },
+          { href: "/catalogo", label: "Catálogo", icon: BookOpen },
+        ] },
+        { href: "/contactos", label: "Clientes y proveedores", hint: "Altas y listados", items: [
+          { key: "customer", label: "Nuevo cliente", icon: Users, main: true },
+          { key: "supplier", label: "Nuevo proveedor", icon: Truck },
+          { href: "/clientes", label: "Clientes", icon: Users },
+          { href: "/proveedores", label: "Proveedores", icon: Truck },
+        ] },
+        { href: "/facturas", label: "Documentos", hint: "Subir y revisar", items: [
+          { key: "delivery", label: "Subir albarán", icon: Truck, main: true },
+          { key: "purchase", label: "Subir factura de proveedor", icon: Files },
+          { key: "bulk", label: "Subir varios o una carpeta", icon: FolderUp },
+        ] },
+        { href: "/inventario", label: "Almacén", hint: "Existencias y material", items: [
+          { key: "cost", label: "Material usado", icon: Package },
+          { href: "/pedidos", label: "Pedidos a proveedor", icon: Truck },
+          { href: "/catalogo", label: "Catálogo", icon: BookOpen },
+        ] },
+        { href: "/beneficios", label: "Datos", hint: "Beneficios, horas y gastos", items: [
+          { key: "expense", label: "Registrar gasto", icon: Receipt, main: true },
+          { href: "/horas", label: "Horas", icon: Clock },
+          { href: "/gastos", label: "Gastos", icon: Wallet },
+        ] },
+        { href: "/trimestres", label: "Fiscalidad", hint: "Trimestres e impuestos", items: [
+          { href: "/trimestres", label: "Trimestres", icon: Calculator },
+          { href: "/calendario", label: "Calendario fiscal", icon: CalendarDays },
+        ] },
+        { href: "/registros", label: "Registros", hint: "Sistema y cambios", items: [] },
+        { href: "/configuracion", label: "Configuración", hint: "Empresa, equipo y valores", items: [] },
+      ]
+    : [
+        { href: "/trabajos", label: "Trabajos", hint: "Horas, material y fotos", items: [
+          { key: "hours", label: "Registrar horas", icon: Clock, main: true },
+          { key: "cost", label: "Material usado", icon: Package },
+          { key: "photo", label: "Añadir fotografía", icon: Camera },
+        ] },
+        { href: "/facturas", label: "Documentos", hint: "Subir albarán", items: [{ key: "delivery", label: "Subir albarán", icon: Truck, main: true }] },
+        { href: "/inventario", label: "Almacén", hint: "Existencias", items: [{ key: "cost", label: "Material usado", icon: Package }] },
+      ]
+  ).map((m) => ({ ...m, icon: navIcon(m.href) }));
   const quick = (action: string) => {
     setAdd(false);
     const actions: Record<string, () => void> = {
@@ -832,6 +911,10 @@ export function Dashboard({
       setError((e as Error).message);
     }
   };
+  const setStatus = async (jobId: string, status: string) => {
+    setStatusBusy(true);
+    try { await run("status", { jobId, status }); } finally { setStatusBusy(false); }
+  };
   const setJobArchived = async (job: Job, archive: boolean) => {
     if (archive && !window.confirm(`¿Retirar «${job.name}» de la lista? Se conservarán sus facturas, horas, documentos, material y presupuesto. Las reservas de material se mantienen. Podrás recuperarlo desde Retirados.`)) return;
     try {
@@ -843,7 +926,21 @@ export function Dashboard({
   };
   const jobTable = (rows: Job[]) =>
     rows.length ? (
-      <div className="table-wrap">
+      <>
+      <div className="job-cards">
+        {rows.map((j) => (
+          <Link key={j.id} href={jobPath(j)} prefetch={true} className="job-card">
+            <div className="jc-main">
+              <strong>{j.name}</strong>
+              <span>{j.customer.name} · {j.number}</span>
+              <small>{[j.plannedAt && fmtDate(j.plannedAt), isAdmin && Number(j.metrics?.net) > 0 && `Facturado ${euro(j.metrics?.net)}`].filter(Boolean).join(" · ") || "Sin fecha prevista"}</small>
+            </div>
+            <Pill>{j.status}</Pill>
+            <ChevronRight size={18} className="text-slate-400" />
+          </Link>
+        ))}
+      </div>
+      <div className="table-wrap job-table">
         <table>
           <thead>
             <tr>
@@ -908,6 +1005,7 @@ export function Dashboard({
           </tbody>
         </table>
       </div>
+      </>
     ) : filter === "Retirados" ? (
       <Empty title="No hay trabajos retirados" description="Los trabajos que retires de la lista aparecerán aquí y podrás recuperarlos." />
     ) : (
@@ -1247,40 +1345,79 @@ export function Dashboard({
               )}
             </div>
           </div>
-          <div className="jd-totals">
-            {isAdmin && (
+          {!isAdmin && (
+            <div className="jd-totals">
               <div>
-                <span>Materiales</span>
-                <strong>{euro(sum(j.costs.map((c) => c.amount)).toString())}</strong>
+                <span>Horas</span>
+                <strong>{number(sum(j.hours.map((h) => h.hours)).toString())} h</strong>
               </div>
-            )}
-            <div>
-              <span>Horas</span>
-              <strong>{number(sum(j.hours.map((h) => h.hours)).toString())} h</strong>
-              {isAdmin && j.metrics && <small>{euro(j.metrics.labor)}</small>}
             </div>
-            {isAdmin && j.metrics && (
-              <div className="total">
-                <span>Costes totales</span>
-                <strong>{euro(j.metrics.direct)}</strong>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </header>
+      {isAdmin && (() => {
+        const m = j.metrics;
+        const mat = Number(sum(j.costs.map((c) => c.amount)).toString());
+        const labor = Number(m?.labor ?? 0), direct = Number(m?.direct ?? 0), billed = Number(m?.net ?? 0), gross = Number(m?.gross ?? 0);
+        const other = Math.max(0, direct - mat - labor);
+        const pctOf = (x: number) => (direct > 0 ? Math.round((x / direct) * 100) : 0);
+        return (
+          <section className="jd-kpis">
+            <div className="kpi hero">
+              <span><Wallet size={14} /> Costes totales</span>
+              <strong>{euro(direct)}</strong>
+              <small>Materiales + mano de obra{other > 0 ? " + otros" : ""}</small>
+            </div>
+            <div className="kpi">
+              <span><Package size={14} /> Materiales</span>
+              <strong>{euro(mat)}</strong>
+              <small>{j.costs.length} {j.costs.length === 1 ? "artículo" : "artículos"}</small>
+            </div>
+            <div className="kpi">
+              <span><Clock size={14} /> Horas</span>
+              <strong>{number(sum(j.hours.map((h) => h.hours)).toString())} h</strong>
+              <small>{m ? `${euro(labor)} de mano de obra` : "Sin horas"}{m?.perHour ? ` · ${euro(m.perHour)}/h` : ""}</small>
+            </div>
+            <div className="kpi">
+              <span><Receipt size={14} /> Facturado</span>
+              <strong>{billed > 0 ? euro(billed) : "Sin facturar"}</strong>
+              <small>{billed > 0 ? `Cobrado ${euro(m?.collected ?? 0)} · pendiente ${euro(m?.pending ?? 0)}` : "Aún no hay facturas"}</small>
+            </div>
+            <div className={`kpi ${billed > 0 && gross < 0 ? "warn" : ""}`}>
+              <span><ChartNoAxesCombined size={14} /> Beneficio</span>
+              <strong>{billed > 0 ? euro(gross) : "—"}</strong>
+              <small>{billed > 0 ? `${m?.margin ?? "—"} % de margen` : "Se calcula al facturar"}</small>
+            </div>
+            {direct > 0 && (
+              <div className="jd-split" aria-label="Reparto de costes">
+                <div className="bar">
+                  <i style={{ width: `${pctOf(mat)}%`, background: "#d88736" }} />
+                  <i style={{ width: `${pctOf(labor)}%`, background: "#0f766e" }} />
+                  {other > 0 && <i style={{ width: `${pctOf(other)}%`, background: "#94a3b8" }} />}
+                </div>
+                <p><b style={{ background: "#d88736" }} />Materiales {pctOf(mat)} %<b style={{ background: "#0f766e" }} />Mano de obra {pctOf(labor)} %{other > 0 && <><b style={{ background: "#94a3b8" }} />Otros {pctOf(other)} %</>}</p>
+              </div>
+            )}
+          </section>
+        );
+      })()}
       {j.archivedAt && <div className="info-banner mb-5">Trabajo retirado. Sus datos e historial se conservan; recupéralo para volver a trabajar con él.{isAdmin && <> <button className="text-button" onClick={() => void setJobArchived(j, false)}>Recuperar trabajo</button></>}</div>}
       {!j.archivedAt && (() => {
         const finished = !!(j.finishedAt || j.status === "Finalizado");
+        // Con factura ya guardada, el trabajo queda asociado a ella: se ve en vez de volver a facturar.
+        const invoice = [...j.sales].sort((a, b) => b.date.localeCompare(a.date))[0];
+        const viewInvoice = () => router.push(`/facturas-venta/${invoice.id}`);
         // Terminado: solo facturar (verde) y reabrir. El técnico no puede reabrir ni facturar, así que no ve nada.
         if (finished)
           return (
             <div className="jd-actions">
-              {isAdmin && <Button onClick={() => openInvoice()}>Facturar trabajo</Button>}
-              {isAdmin && <Button variant="outline" onClick={() => run("status", { jobId: j.id, status: "En proceso" })}>Reabrir trabajo</Button>}
+              {isAdmin && (invoice ? <Button onClick={viewInvoice}>Ver factura</Button> : <Button onClick={() => openInvoice()}>Facturar trabajo</Button>)}
+              {isAdmin && <Button variant="outline" loading={statusBusy} onClick={() => setStatus(j.id, "En proceso")}>{statusBusy ? "Reabriendo…" : "Reabrir trabajo"}</Button>}
               <MoreMenu>
                 <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
                 <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
                 {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
+                {isAdmin && invoice && <button role="menuitem" onClick={() => openInvoice()}>Registrar otra factura</button>}
                 {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
                 {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
               </MoreMenu>
@@ -1288,16 +1425,23 @@ export function Dashboard({
           );
         return (
           <div className="jd-actions">
-            <Button onClick={createHours}>Registrar horas</Button>
-            <Button variant="outline" onClick={() => setMaterial(true)}>Añadir material</Button>
+            <Button className="jd-btn" onClick={createHours}><Clock size={18} /><span>Registrar horas</span></Button>
+            <Button className="jd-btn" variant="outline" onClick={() => setMaterial(true)}><Package size={18} /><span>Añadir material</span></Button>
+            <Button className="jd-btn jd-finish" variant="outline" loading={statusBusy} onClick={() => setConfirmFinish(true)}>{!statusBusy && <Check size={18} />}<span>{statusBusy ? "Finalizando…" : "Marcar finalizado"}</span></Button>
+            <Dialog open={confirmFinish} onOpenChange={(v) => !statusBusy && setConfirmFinish(v)} title="¿Marcar como finalizado?">
+              <p className="small-note">«{j.name}» pasará a finalizado. Podrás reabrirlo cuando quieras.</p>
+              <div className="form-footer">
+                <Button variant="outline" disabled={statusBusy} onClick={() => setConfirmFinish(false)}>Cancelar</Button>
+                <Button loading={statusBusy} onClick={async () => { await setStatus(j.id, "Finalizado"); setConfirmFinish(false); }}>{statusBusy ? "Finalizando…" : "Sí, finalizar"}</Button>
+              </div>
+            </Dialog>
             <MoreMenu>
               {isAdmin && j.status === "Pendiente" && <button role="menuitem" onClick={() => run("status", { jobId: j.id, status: "En proceso" })}>Iniciar trabajo</button>}
-              {(!finished || isAdmin) && <button role="menuitem" onClick={() => run("status", { jobId: j.id, status: finished ? "En proceso" : "Finalizado" })}>{finished ? "Reabrir trabajo" : "Marcar finalizado"}</button>}
               <Link href={`/inventario?trabajo=${j.id}`} role="menuitem">Usar material de almacén</Link>
               <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
               <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
               {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
-              {isAdmin && <button role="menuitem" onClick={() => openInvoice()}>Registrar factura</button>}
+              {isAdmin && (invoice ? <button role="menuitem" onClick={viewInvoice}>Ver factura</button> : <button role="menuitem" onClick={() => openInvoice()}>Registrar factura</button>)}
               {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
               {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
             </MoreMenu>
@@ -1355,9 +1499,10 @@ export function Dashboard({
                       {j.quotes.map((q) => (
                         <div key={q.id} className="record">
                           <div>
-                            <strong>{q.name}</strong>
-                            <small>Coste previsto: {euro(q.cost)} · {number(q.plannedHours)} h</small>
-                            <small>Precio neto: {euro(q.net)}</small>
+                            <strong><Link href={`/presupuestos/${q.id}`}>{q.number || q.name}</Link></strong>
+                            {q.number && <small>{q.name}</small>}
+                            {Number(q.cost) > 0 && <small>Coste previsto: {euro(q.cost)} · {number(q.plannedHours)} h</small>}
+                            <small>Base: {euro(q.net)}{Number(q.tax) > 0 ? ` · total ${euro(dec(q.net).plus(q.tax ?? 0).toString())}` : ""}</small>
                             {q.approved && j.metrics && <small>Desviación de horas: {number(dec(j.metrics.hours).minus(q.plannedHours).toString())} h</small>}
                           </div>
                           {q.approved ? <Pill>Aprobado</Pill> : !j.archivedAt ? <Button variant="outline" size="sm" onClick={() => run("approveQuote", { quoteId: q.id })}>Aprobar</Button> : null}
@@ -1365,7 +1510,7 @@ export function Dashboard({
                       ))}
                     </div>
                   ) : (
-                    <Empty title="Sin presupuesto" description="Calcula el precio a partir de tus costes y del margen que quieras conseguir." action={!j.archivedAt ? <Button variant="outline" onClick={createQuote}>Crear presupuesto</Button> : undefined} />
+                    <Empty title="Sin presupuesto" description="Crea un presupuesto con sus líneas, como una factura, y apruébalo cuando el cliente lo acepte." action={!j.archivedAt ? <Button variant="outline" onClick={createQuote}>Crear presupuesto</Button> : undefined} />
                   )}
                 </Panel>
               </>
@@ -1906,16 +2051,16 @@ export function Dashboard({
                   )}
                 </div>
                 <div className="flex gap-3 mb-5 items-center">
-                  <select
-                    aria-label="Filtrar por estado"
-                    className="max-w-64 mb-0"
+                  <StatusFilter
+                    options={["Todos", ...statuses, ...(isAdmin ? ["Retirados"] : [])]}
                     value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                  >
-                    {["Todos", ...statuses, ...(isAdmin ? ["Retirados"] : [])].map((x) => (
-                      <option key={x}>{x}</option>
-                    ))}
-                  </select>
+                    onChange={setFilter}
+                    counts={{
+                      Todos: s.jobs.filter((j) => !j.archivedAt).length,
+                      Retirados: s.jobs.filter((j) => j.archivedAt).length,
+                      ...Object.fromEntries(statuses.map((x) => [x, s.jobs.filter((j) => !j.archivedAt && j.status === x).length])),
+                    }}
+                  />
                   <span className="small-note">{jobs.length} trabajos</span>
                 </div>
                 <Panel
@@ -2191,6 +2336,10 @@ export function Dashboard({
               </div>
             </>
           )}
+          {isAdmin && (() => {
+            const tabs = ["beneficios", "horas", "gastos"].includes(section) ? subTabs.datos : ["trimestres", "calendario"].includes(section) ? subTabs.fiscal : null;
+            return tabs ? <div className="sub-tabs">{tabs.map((t) => <Link key={t.href} href={t.href} className={pathname === t.href ? "active" : ""}>{t.label}</Link>)}</div> : null;
+          })()}
           {section === "beneficios" && isAdmin && (
             <>
               <div className="page-head">
@@ -2355,14 +2504,44 @@ export function Dashboard({
           {section === "cobros" && isAdmin && (
             <InvoiceList sales={s.sales} preset="pending" title="Cobros" onNew={openInvoice} onPayment={payment} />
           )}
-          {section === "presupuestos" && isAdmin && <QuotesList jobs={s.jobs} onNew={createQuote} refresh={load} />}
+          {section === "presupuestos" && isAdmin && (pathname.split("/")[2] ? (
+            <QuoteDetail
+              key={pathname}
+              quote={s.jobs.flatMap((j) => j.quotes).find((x) => x.id === pathname.split("/")[2])}
+              job={s.jobs.find((j) => j.quotes.some((x) => x.id === pathname.split("/")[2]))}
+              refresh={load}
+            />
+          ) : (
+            <QuotesList jobs={s.jobs} onNew={createQuote} refresh={load} />
+          ))}
+          {section === "nuevo-presupuesto" && isAdmin && (
+            <InvoicePage
+              key={pathname}
+              mode="quote"
+              jobs={activeJobs}
+              customers={s.customers}
+              jobId={pathname.split("/")[2]}
+              sales={s.sales}
+              defaultRate={s.company.defaultHourlyRate}
+              defaultTax={s.company.defaultTax}
+              templates={s.templates}
+              refresh={load}
+              onDone={() => {
+                setToast("Presupuesto guardado.");
+                router.push("/presupuestos");
+              }}
+            />
+          )}
           {section === "nueva-factura" && isAdmin && (
             <InvoicePage
               key={pathname}
               jobs={activeJobs}
               customers={s.customers}
               jobId={pathname.split("/")[2]}
+              quoteId={pathname.split("/")[3]}
               sales={s.sales}
+              defaultRate={s.company.defaultHourlyRate}
+              defaultTax={s.company.defaultTax}
               templates={s.templates}
               refresh={load}
               onDone={() => {
@@ -2375,6 +2554,43 @@ export function Dashboard({
           {section === "pedidos" && isAdmin && (
             <PurchaseOrders suppliers={s.suppliers} />
           )}
+          {section === "registros" && isAdmin && (
+            <>
+              <div className="page-head">
+                <div>
+                  <div className="eyebrow">SOLO RESPONSABLES</div>
+                  <h1 className="mt-2">Registros</h1>
+                  <p className="subtitle">Estado del sistema, asistente de voz y cambios realizados.</p>
+                </div>
+              </div>
+              <SystemHealth />
+              <VoiceUsage />
+                  <Panel
+                    title="Registro de cambios"
+                    subtitle="Últimas operaciones de la empresa"
+                    action={s.audits.length > 10 ? <button className="text-button" onClick={() => setAuditsOpen(true)}>Ver más</button> : undefined}
+                  >
+                    <div className="record-list">
+                      {s.audits.slice(0, 10).map((a) => (
+                        <div className="record" key={a.id}>
+                          <span>{a.action}</span>
+                          <small>{fmtDate(a.createdAt)}</small>
+                        </div>
+                      ))}
+                    </div>
+                  </Panel>
+                  <Dialog open={auditsOpen} onOpenChange={setAuditsOpen} title="Registro de cambios">
+                    <div className="record-list">
+                      {s.audits.map((a) => (
+                        <div className="record" key={a.id}>
+                          <span>{a.action}</span>
+                          <small>{fmtDate(a.createdAt)}</small>
+                        </div>
+                      ))}
+                    </div>
+                  </Dialog>
+            </>
+          )}
           {section === "configuracion" && isAdmin && (
             <>
               <div className="page-head">
@@ -2382,12 +2598,10 @@ export function Dashboard({
                   <div className="eyebrow">A TU MANERA</div>
                   <h1 className="mt-2">Configuración</h1>
                   <p className="subtitle">
-                    Tu empresa, tus clientes y los costes reales de tu equipo.
+                    Tu empresa, tus valores por defecto y tu equipo.
                   </p>
                 </div>
               </div>
-              <SystemHealth />
-              <VoiceUsage />
               <Panel
                 title={s.company.name}
                 subtitle={s.company.taxId || "Completa los datos de tu empresa"}
@@ -2397,7 +2611,7 @@ export function Dashboard({
                     size="sm"
                     onClick={() =>
                       setModal({
-                        title: "Datos de empresa",
+                        title: "Datos y valores por defecto",
                         action: "company",
                         fields: [
                           field("name", "Nombre", "text", s.company.name),
@@ -2408,66 +2622,26 @@ export function Dashboard({
                             s.company.taxId ?? "",
                             false,
                           ),
+                          { ...field("defaultMargin", "Margen recomendado sobre el coste (%)", "number", s.company.defaultMargin ?? "30"), hint: "Se suma al coste del material al facturar." },
+                          select("defaultTax", "IVA por defecto en facturas y gastos", [21, 10, 4, 0].map((x) => ({ value: String(x), label: `${x} %` })), String(Number(s.company.defaultTax ?? 21))),
+                          { ...field("defaultQuoteMargin", "Margen por defecto en presupuestos (% sobre venta)", "number", s.company.defaultQuoteMargin ?? "25"), hint: "Precio de venta = coste / (1 − margen)." },
+                          { ...field("defaultHourlyRate", "Precio por defecto de la mano de obra (€/h)", "number", s.company.defaultHourlyRate ?? "0", false), hint: "Si el cliente no tiene precio propio. 0 = coste medio + margen." },
                         ],
                       })
                     }
                   >
-                    Editar empresa
+                    Editar
                   </Button>
                 }
               >
-                <p className="small-note px-6 pb-5">
-                  Servidor local · PostgreSQL · OCR Tesseract. Las cuentas de tu
-                  equipo se gestionan en «Usuarios y accesos».
-                </p>
-              </Panel>
-              <div className="two-col">
-                <div>
-                  <Panel title="Clientes">
-                    <p className="small-note px-6 pb-5"><Link className="text-button" href="/clientes">Ver y gestionar clientes ?</Link></p>
-                  </Panel>
-                  <Panel
-                    title="Gastos generales"
-                    subtitle="Gastos de funcionamiento. No registres aquí compras de activos como un gasto completo."
-                    action={
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          setModal({
-                            title: "Registrar gasto general",
-                            action: "overhead",
-                            fields: [
-                              field("description", "Descripción"),
-                              field("amount", "Importe neto (€)", "number"),
-                              field("tax", "IVA soportado (€)", "number", "0"),
-                              field("date", "Fecha", "date", today()),
-                            ],
-                          })
-                        }
-                      >
-                        + Añadir gasto
-                      </button>
-                    }
-                  >
-                    <div className="record-list">
-                      {s.overheads.map((x) => (
-                        <div className="record" key={x.id}>
-                          <div>
-                            {x.description}
-                            <small>{fmtDate(x.date)}</small>
-                          </div>
-                          <strong>{euro(x.amount)}</strong>
-                        </div>
-                      ))}
-                      {!s.overheads.length && (
-                        <p className="small-note pb-4">
-                          Aún no hay gastos generales registrados.
-                        </p>
-                      )}
-                    </div>
-                  </Panel>
+                <div className="kpi-grid" style={{ padding: "0 16px 16px", marginBottom: 0 }}>
+                  <div className="kpi"><span>Margen sobre el coste</span><strong>{Number(s.company.defaultMargin ?? 30)} %</strong><small>Material al facturar</small></div>
+                  <div className="kpi"><span>Margen en presupuestos</span><strong>{Number(s.company.defaultQuoteMargin ?? 25)} %</strong><small>Sobre el precio de venta</small></div>
+                  <div className="kpi"><span>IVA por defecto</span><strong>{Number(s.company.defaultTax ?? 21)} %</strong><small>Facturas y gastos</small></div>
+                  <div className="kpi"><span>Mano de obra</span><strong>{Number(s.company.defaultHourlyRate) > 0 ? `${euro(s.company.defaultHourlyRate!)} / h` : "Automático"}</strong><small>{Number(s.company.defaultHourlyRate) > 0 ? "Si el cliente no tiene precio propio" : "Coste medio + margen"}</small></div>
                 </div>
-                <div>
+              </Panel>
+              <div className="acct-cols">
                   <Panel
                     title="Equipo y coste laboral"
                     action={
@@ -2585,20 +2759,6 @@ export function Dashboard({
                       ))}
                     </div>
                   </Panel>
-                  <Panel
-                    title="Registro de cambios"
-                    subtitle="Últimas 40 operaciones de la empresa"
-                  >
-                    <div className="record-list">
-                      {s.audits.map((a) => (
-                        <div className="record" key={a.id}>
-                          <span>{a.action}</span>
-                          <small>{fmtDate(a.createdAt)}</small>
-                        </div>
-                      ))}
-                    </div>
-                  </Panel>
-                </div>
               </div>
             </>
           )}
@@ -2623,7 +2783,9 @@ export function Dashboard({
             "facturas-venta",
             "cobros",
             "presupuestos",
+            "nuevo-presupuesto",
             "configuracion",
+            "registros",
           ].includes(section) && (
             <Empty
               title="Esta página no existe"
@@ -2691,7 +2853,7 @@ export function Dashboard({
               <Plus size={28} strokeWidth={2.8} />
             </button>,
             tab("/inventario"),
-            tab("/facturas"),
+            ...(isAdmin ? [tab("/ventas")] : []),
           ];
         })()}
       </nav>
@@ -2702,58 +2864,56 @@ export function Dashboard({
         </div>
       )}
       <Dialog open={add} onOpenChange={setAdd} title="¿Qué quieres hacer?">
-        {(isAdmin
-          ? [
-              { title: "Asistente", items: [{ key: "voice", label: "Dictar una orden", icon: Mic }] },
-              { title: "Documentos", items: [
-                { key: "delivery", label: "Subir albarán", icon: Truck, main: true },
-                { key: "purchase", label: "Subir factura de proveedor", icon: Files, main: true },
-                { key: "bulk", label: "Subir varios o una carpeta", icon: FolderUp },
-              ] },
-              { title: "Trabajo", items: [
-                { key: "cost", label: "Material usado", icon: Package },
-                { key: "hours", label: "Registrar horas", icon: Clock },
-                { key: "job", label: "Nuevo trabajo", icon: BriefcaseBusiness },
-              ] },
-              { title: "Ventas", items: [
-                { key: "invoice", label: "Facturas", icon: FileCheck2, main: true },
-                { key: "quote", label: "Presupuestos", icon: FilePlus2 },
-              ] },
-              { title: "Gastos", items: [
-                { key: "expense", label: "Registrar gasto", icon: Receipt },
-              ] },
-              { title: "Contactos", items: [
-                { key: "customer", label: "Cliente", icon: Users },
-                { key: "supplier", label: "Proveedor", icon: Truck },
-              ] },
-            ]
-          : [
-              { title: "Asistente", items: [{ key: "voice", label: "Dictar una orden", icon: Mic }] },
-              { title: "Documentos", items: [{ key: "delivery", label: "Subir albarán", icon: Truck, main: true }] },
-              { title: "Trabajo", items: [
-                { key: "cost", label: "Material usado", icon: Package },
-                { key: "hours", label: "Registrar horas", icon: Clock },
-                { key: "photo", label: "Añadir fotografía", icon: Camera },
-              ] },
-            ]
-        ).map((g) => (
-          <section className="create-group" key={g.title}>
-            <h3>{g.title}</h3>
+        <section className="create-group desktop-only">
+          <h3>Asistente</h3>
+          <div className="create-grid">
+            <button className="create-tile" onClick={() => quick("voice")}>
+              <span className="ct-icon"><Mic size={22} /></span>
+              <strong>Dictar una orden</strong>
+            </button>
+          </div>
+        </section>
+        {modules.filter((m) => m.items.length).map((m) => (
+          <section className="create-group" key={m.href}>
+            <h3 className="grp-h">
+              <span>{m.label}</span>
+              <Link href={m.href} onClick={() => setAdd(false)}>Abrir<ChevronRight size={13} /></Link>
+            </h3>
             <div className="create-grid">
-              {g.items.map((x) => (
-                <button key={x.key} className={`create-tile${"main" in x && x.main ? " primary" : ""}`} onClick={() => quick(x.key)}>
-                  <span className="ct-icon"><x.icon size={22} /></span>
-                  <strong>{x.label}</strong>
-                </button>
-              ))}
+              {m.items.map((x, i) =>
+                x.href ? (
+                  <Link key={x.label} href={x.href} className="create-tile" onClick={() => setAdd(false)}>
+                    <span className="ct-icon"><x.icon size={22} /></span>
+                    <strong>{x.label}</strong>
+                  </Link>
+                ) : (
+                  <button key={x.label} className={`create-tile${x.main || (i === 0 && m.items.every((y) => !y.main)) ? " primary" : ""}`} onClick={() => quick(x.key!)}>
+                    <span className="ct-icon"><x.icon size={22} /></span>
+                    <strong>{x.label}</strong>
+                  </button>
+                ),
+              )}
             </div>
           </section>
         ))}
+        {modules.some((m) => !m.items.length) && (
+          <section className="create-group">
+            <h3>Más</h3>
+            <div className="goto-grid">
+              {modules.filter((m) => !m.items.length).map((m) => (
+                <Link key={m.href} href={m.href} className="goto-link" onClick={() => setAdd(false)}>
+                  <m.icon size={18} />
+                  {m.label}
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
       </Dialog>
       <Dialog open={menu} onOpenChange={setMenu} title="Menú">
         <div className="more-sections">
-          {visibleNav.filter((n) => !primaryHrefs.includes(n.href)).map((n) => (
-            <Link key={n.href} href={n.href} onClick={() => setMenu(false)}>
+          {visibleNav.filter((n) => !bottomHrefs.includes(n.href)).map((n) => (
+            <Link key={n.href} href={n.href} className={primaryHrefs.includes(n.href) ? "in-sidebar" : undefined} onClick={() => setMenu(false)}>
               <n.icon size={20} />
               {n.label}
               <ChevronRight size={16} />
@@ -2786,6 +2946,7 @@ export function Dashboard({
           jobs={activeJobs}
           jobId={selected?.id}
           workers={s.workers}
+          defaultMargin={s.company.defaultQuoteMargin}
           close={() => setQuoteBuilder(false)}
           saved={async () => {
             setQuoteBuilder(false);
@@ -2796,6 +2957,7 @@ export function Dashboard({
       )}
       {material && (
         <MaterialPicker
+          canEdit={isAdmin}
           jobs={activeJobs}
           jobId={selected?.id}
           close={() => setMaterial(false)}
@@ -2810,9 +2972,11 @@ export function Dashboard({
           }}
         />
       )}
-      {voice && <VoiceDialog close={() => setVoice(false)} confirm={async (action, payload, meta) => { await request("/api/voice/confirm", { action, payload, ...meta }); await saved(); }} />}
+      {!voice && <AssistantFab onOpen={() => setVoice(true)} />}
+      {voice && <VoiceDialog admin={isAdmin} close={() => setVoice(false)} confirm={async (action, payload, meta) => { await request("/api/voice/confirm", { action, payload, ...meta }); await saved(); }} />}
       {expense && (
         <ExpenseForm
+          defaultTax={s.company.defaultTax}
           close={() => setExpense(false)}
           saved={async () => {
             setExpense(false);

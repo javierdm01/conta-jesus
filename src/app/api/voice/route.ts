@@ -12,6 +12,7 @@ export async function POST(req: Request) {
     const u = await currentUser();
     limit(`voice:${u.id}`, 30);
     let text = "";
+    let history: { who: string; text: string }[] = [];
     if (req.headers.get("content-type")?.includes("multipart/form-data")) {
       const f = (await req.formData()).get("audio");
       if (!(f instanceof File) || f.size === 0 || f.size > 5_000_000) return Response.json({ error: "Audio no válido." }, { status: 400 });
@@ -20,9 +21,13 @@ export async function POST(req: Request) {
       text = await transcribe(u, f, names.map((x) => x.name).join(", "));
       // Modo conversación: solo transcribir; el cliente decide si es un sí/no o una orden nueva.
       if (new URL(req.url).searchParams.has("stt")) return Response.json({ transcript: text });
-    } else text = String((await req.json()).text ?? "").slice(0, 500);
+    } else {
+      const b = await req.json();
+      text = String(b.text ?? "").slice(0, 500);
+      history = Array.isArray(b.history) ? b.history.slice(-6).map((h: { who?: unknown; text?: unknown }) => ({ who: String(h.who ?? ""), text: String(h.text ?? "").slice(0, 400) })) : [];
+    }
     if (!text.trim()) return Response.json({ transcript: "", message: "No he oído nada. Inténtalo de nuevo." });
-    return Response.json(await interpret(u, text));
+    return Response.json(await interpret(u, text, history));
   } catch (e) {
     return apiError(e);
   }

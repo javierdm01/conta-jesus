@@ -70,6 +70,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
         address: v.text,
         contact: v.text,
         terms: v.text,
+        hourlyRate: z.preprocess((x) => (x === "" ? undefined : x), v.price.optional()),
       })
       .parse(input);
     return serial(async (tx) => {
@@ -80,6 +81,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
           phone: d.phone,
           email: d.email,
           address: d.address,
+          ...(d.hourlyRate !== undefined ? { hourlyRate: d.hourlyRate } : {}),
         },
         supplier = {
           companyId,
@@ -170,7 +172,8 @@ export async function operate(u: Actor, action: string, input: unknown) {
       const n = await tx.job.count({ where: { companyId } }),
         data = {
           ...d,
-          workerId: d.workerId ?? null,
+          // Regla: un trabajo nuevo (a mano o por el asistente) queda a cargo de quien lo crea, si tiene ficha de técnico.
+          workerId: d.workerId ?? (updateId ? null : (u.worker?.id ?? null)),
           plannedAt: d.plannedAt ? new Date(d.plannedAt) : null,
         };
       const row = updateId
@@ -508,6 +511,61 @@ export async function operate(u: Actor, action: string, input: unknown) {
       return row;
     });
   }
+  if (action === "quote-save") {
+    admin(u);
+    const d = z
+      .object({
+        jobId: v.id,
+        number: v.name,
+        date: v.date,
+        validUntil: v.date.optional(),
+        net: v.money,
+        tax: v.money,
+        notes: v.text,
+        requestKey: v.requestKey,
+        lines: z
+          .array(
+            z.object({
+              description: v.name,
+              unit: z.string().trim().min(1).max(12).default("ud"),
+              quantity: v.quantity,
+              price: v.price,
+              discount: v.percent.default("0"),
+            }),
+          )
+          .min(1)
+          .max(100),
+      })
+      .parse(input);
+    await accessibleJob(u, d.jobId);
+    const lines = d.lines.map((l) => ({ ...l, net: lineNet(l.quantity, l.price, l.discount) }));
+    if (!sum(lines.map((l) => l.net)).eq(d.net))
+      throw new AppError("Las líneas no coinciden con la base del presupuesto.");
+    return serial(async (tx) => {
+      const dup = await tx.quote.findFirst({ where: { companyId, number: d.number.trim().toUpperCase() }, select: { id: true } });
+      if (dup) throw new AppError("Ya existe un presupuesto con ese número.");
+      const row = await tx.quote.create({
+        data: {
+          companyId,
+          jobId: d.jobId,
+          name: lines[0].description.slice(0, 200),
+          number: d.number.trim().toUpperCase(),
+          date: new Date(d.date),
+          validUntil: d.validUntil ? new Date(d.validUntil) : null,
+          net: d.net,
+          tax: d.tax,
+          notes: d.notes,
+          requestKey: d.requestKey,
+          lines,
+          cost: 0,
+          plannedHours: 0,
+          inputs: { margin: "0", lines: lines.map(({ description, unit, quantity, price }) => ({ description, unit, quantity, price })) },
+        },
+      });
+      await audit(tx, u, "Crear presupuesto", row.id);
+      return row;
+    });
+  }
   if (action === "approveQuote") {
     admin(u);
     const d = z.object({ quoteId: v.id }).parse(input);
@@ -653,7 +711,8 @@ export async function operate(u: Actor, action: string, input: unknown) {
   }
   if (action === "company") {
     admin(u);
-    const d = z.object({ name: v.name, taxId: v.text }).parse(input);
+    const opt = <T extends z.ZodType>(x: T) => z.preprocess((n) => (n === "" ? undefined : n), x.optional()) as unknown as z.ZodOptional<T>;
+    const d = z.object({ name: v.name, taxId: v.text, defaultMargin: opt(v.percent), defaultHourlyRate: opt(v.price), defaultTax: opt(z.enum(["21", "10", "4", "0"])), defaultQuoteMargin: opt(v.percent) }).parse(input);
     return serial(async (tx) => {
       const row = await tx.company.update({
         where: { id: companyId },

@@ -27,10 +27,10 @@ async function post(url: string, body: BodyInit, json = true) {
 }
 
 /** Registrar un gasto en 3 pasos: tipo → importe → guardar. El justificante es opcional. */
-export function ExpenseForm({ close, saved }: { close: () => void; saved: () => Promise<void> }) {
+export function ExpenseForm({ close, saved, defaultTax }: { close: () => void; saved: () => Promise<void>; defaultTax?: string }) {
   const [category, setCategory] = useState<(typeof EXPENSE_CATEGORIES)[number]["key"]>("COMBUSTIBLE"),
     [total, setTotal] = useState(""),
-    [vat, setVat] = useState(21),
+    [vat, setVat] = useState(Number(defaultTax ?? 21)),
     [date, setDate] = useState(today()),
     [concept, setConcept] = useState(""),
     [file, setFile] = useState<File | null>(null),

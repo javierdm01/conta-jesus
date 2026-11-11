@@ -1,13 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff } from "lucide-react";
-import { Dialog } from "@/components/ui/dialog";
+import { ChevronRight, Mic, Send, Settings2, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Proposal } from "@/lib/voice";
 
-type Reply = { transcript?: string; proposal?: Proposal; message?: string; error?: string };
+type ListData = { title: string; items: { label: string; detail?: string; href?: string }[] };
+type Reply = { transcript?: string; proposal?: Proposal; message?: string; error?: string; list?: ListData };
 type Phase = "idle" | "listening" | "thinking" | "speaking";
-type Line = { who: "tú" | "asistente"; text: string };
+type Line = { who: "tú" | "asistente"; text: string; list?: ListData };
 
 const plain = (t: string) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 const YES = /^(si|vale|ok|okey|confirma|confirmo|guardalo|guardala|adelante|correcto|dale|hazlo|claro|perfecto|de acuerdo)\b/;
@@ -32,14 +32,85 @@ const loadPrefs = (): Prefs => {
   return { voice: "k-dora", speed: 1 };
 };
 const FIXED = ["Hecho, guardado.", "Vale, lo dejo sin guardar."];
-const LABEL: Record<Phase, string> = { idle: "Toca para hablar", listening: "Te escucho… toca para enviar", thinking: "Pensando…", speaking: "Hablando…" };
+const LABEL: Record<Phase, string> = { idle: "Toca el micrófono para hablar", listening: "Te escucho… toca para enviar", thinking: "Pensando…", speaking: "Hablando…" };
+const STATUS: Record<Phase, string> = { idle: "Listo", listening: "Escuchando…", thinking: "Pensando…", speaking: "Hablando…" };
+// Sugerencias tipo Copilot: lo que suele venir después de cada acción. «▮» marca dónde queda el cursor si el texto se completa a mano.
+type Chip = { label: string; text: string; fill?: boolean; admin?: boolean };
+const C = (label: string, text = label, o: Partial<Chip> = {}): Chip => ({ label, text, ...o });
+const SUGGESTIONS: Chip[] = [
+  C("¿Cuánto me deben?", "¿Cuánto me deben en total?", { admin: true }),
+  C("Lista de clientes", "Sácame una lista de todos los clientes", { admin: true }),
+  C("Trabajos abiertos", "Muéstrame los trabajos abiertos"),
+  C("Material con poco stock", "Dime el material con poco stock"),
+  C("Horas de este mes", "¿Cuántas horas llevo este mes?"),
+];
+const of = (c?: string) => (c ? ` de ${c}` : "");
+const HOURS = (c?: string) => C("Registrar horas", `Registra horas de 8 a 5 en el último trabajo${of(c)}`);
+const MATERIAL = (c?: string) => C("Añadir material", `Añade un ▮ al último trabajo${of(c)}`, { fill: true });
+const FINISH = (c?: string) => C("Marcar finalizado", `Marca como finalizado el último trabajo${of(c)}`);
+const OPEN = C("Trabajos abiertos", "Muéstrame los trabajos abiertos");
+const OWED = C("¿Cuánto me deben?", "¿Cuánto me deben en total?", { admin: true });
+const UNPAID = C("Facturas pendientes", "¿Qué facturas tengo pendientes de cobro?", { admin: true });
+const LOW = C("Material con poco stock", "Dime el material con poco stock");
+const MONTH_HOURS = C("Horas de este mes", "¿Cuántas horas llevo este mes?");
+// Después de guardar una acción (action = la que confirma el servidor; summary = el texto que se le leyó al usuario).
+function followUps(action: string, payload: Record<string, unknown>, summary: string): Chip[] {
+  const parts = summary.split(" · ");
+  switch (action) {
+    case "customer": {
+      const n = String(payload.name ?? "");
+      return [C("Crear un trabajo", `Crea un trabajo para ${n}`, { admin: true }), C("Ver sus trabajos", `Muéstrame los trabajos de ${n}`), C("Lista de clientes", "Sácame una lista de todos los clientes", { admin: true })];
+    }
+    case "supplier":
+      return [C("Lista de proveedores", "Sácame la lista de proveedores", { admin: true }), LOW, C("Añadir otro proveedor", "Créame al proveedor ▮", { fill: true, admin: true })];
+    case "job": {
+      const c = /para (.+)$/.exec(summary)?.[1];
+      return [HOURS(c), MATERIAL(c), C("Crear presupuesto", "¿Qué presupuestos hay pendientes?", { admin: true })];
+    }
+    case "hours": {
+      const c = parts[3];
+      return [MATERIAL(c), FINISH(c), MONTH_HOURS];
+    }
+    case "stock-move": {
+      const c = parts[1];
+      return [HOURS(c), FINISH(c), LOW];
+    }
+    case "status":
+      return /finalizado/i.test(summary) ? [UNPAID, OWED, OPEN] : [HOURS(), MATERIAL(), OPEN];
+    case "overhead":
+      return [C("Gastos de este mes", "¿Cuánto he gastado este mes?", { admin: true }), OWED, OPEN];
+    case "payment":
+      return [UNPAID, OWED, OPEN];
+    case "approveQuote":
+      return [HOURS(), MATERIAL(), C("Presupuestos pendientes", "¿Qué presupuestos hay pendientes de aprobar?", { admin: true })];
+    default:
+      return [OPEN, OWED, LOW];
+  }
+}
+// Después de una consulta o una respuesta.
+function afterAnswer(title?: string): Chip[] {
+  const t = (title ?? "").toLowerCase();
+  if (t.includes("cliente")) return [OPEN, UNPAID, C("Crear un cliente", "Créame al cliente ▮", { fill: true, admin: true })];
+  if (t.includes("trabajo")) return [HOURS(), MATERIAL(), UNPAID];
+  if (t.includes("factura")) return [OWED, OPEN, C("Registrar un cobro", "Registra un cobro de ▮ euros", { fill: true, admin: true })];
+  if (t.includes("presupuesto")) return [UNPAID, OPEN, OWED];
+  if (t.includes("mínimo") || t.includes("existencias") || t.includes("catálogo")) return [C("Lista de proveedores", "Sácame la lista de proveedores", { admin: true }), LOW, OPEN];
+  if (t.includes("proveedor")) return [LOW, OWED, OPEN];
+  return [OPEN, OWED, LOW];
+}
+const FALLBACK: Chip[] = [C("Crear un cliente", "Créame al cliente ▮", { fill: true, admin: true }), HOURS(), MATERIAL(), C("Lista de clientes", "Sácame una lista de todos los clientes", { admin: true })];
+const MAX_REC = 15; // segundos
+const mmss = (s: number) => `0:${String(Math.min(Math.floor(s), MAX_REC)).padStart(2, "0")}`;
 
 // Conversación por voz: escucha hasta que callas, responde en voz alta y pide confirmación antes de guardar.
-export default function VoiceDialog({ close, confirm }: { close: () => void; confirm: (action: string, payload: unknown, meta: { text: string; summary: string }) => Promise<void> }) {
+export default function VoiceDialog({ close, confirm, admin = true }: { close: () => void; admin?: boolean; confirm: (action: string, payload: unknown, meta: { text: string; summary: string }) => Promise<void> }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [log, setLog] = useState<Line[]>([]);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
+  const [follow, setFollow] = useState<Chip[]>([]);
+  const [levels, setLevels] = useState<number[]>(() => Array(32).fill(0));
+  const [elapsed, setElapsed] = useState(0);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
@@ -96,7 +167,7 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
     };
     play(0);
   };
-  const say = (t: string, then?: () => void) => {
+  const say = (t: string, then?: () => void, list?: ListData) => {
     setPhase("thinking");
     speak(
       t,
@@ -105,7 +176,7 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
         setPhase("idle");
         then?.();
       },
-      () => (setLog((l) => [...l, { who: "asistente", text: t }]), setPhase("speaking")),
+      () => (setLog((l) => [...l, { who: "asistente", text: t, list }]), setPhase("speaking")),
     );
   };
   const choose = (p: Prefs) => {
@@ -124,6 +195,7 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
     const n0 = plain(said);
     if (!pending.current && n0.length < 20 && (YES.test(n0) || NO.test(n0))) return keepListening && alive.current ? listen() : undefined;
     setLog((l) => [...l, { who: "tú", text: said }]);
+    setFollow([]);
     const next = () => keepListening && alive.current && listen();
     const p = pending.current;
     if (p) {
@@ -133,6 +205,7 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
         setPhase("thinking");
         try {
           await confirm(p.action, p.payload, { text: p.text, summary: p.summary });
+          setFollow(followUps(p.action, p.payload, p.summary));
           return say("Hecho, guardado.", next);
         } catch {
           return say("No he podido guardarlo.", next);
@@ -146,19 +219,20 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
     }
     setPhase("thinking");
     try {
-      const r = await fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: said }) });
+      const r = await fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: said, history: log.slice(-6).map((l) => ({ who: l.who, text: l.text })) }) });
       const d: Reply = await r.json();
       if (d.proposal) {
         pending.current = d.proposal;
         return say(`${d.proposal.summary}. ¿Lo guardo?`, next);
       }
-      say(d.message ?? d.error ?? "No he entendido.", next);
+      setFollow(d.message?.startsWith("No he entendido") ? FALLBACK : afterAnswer(d.list?.title ?? d.message));
+      say(d.message ?? d.error ?? "No he entendido.", next, d.list);
     } catch {
       say("No me he podido conectar.", next);
     }
   };
 
-  // Escucha una frase: graba cuando detecta voz y se para tras ~1,3 s de silencio.
+  // Escucha una frase: graba cuando detecta voz y se para al callar (máximo 15 s).
   const listen = async () => {
     setError("");
     try {
@@ -177,12 +251,17 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
     rec.ondataavailable = (e) => chunks.push(e.data);
     let heard = false, lastVoice = Date.now(), cancelled = false;
     const t0 = Date.now();
+    setLevels(Array(32).fill(0));
+    setElapsed(0);
     const tick = setInterval(() => {
       an.getByteTimeDomainData(buf);
       const level = Math.max(...buf.map((x) => Math.abs(x - 128))) / 128;
       const now = Date.now();
       if (level > 0.08) (heard = true), (lastVoice = now);
-      if ((heard && now - lastVoice > 1000) || now - t0 > (heard ? 30000 : 8000)) rec.stop();
+      setLevels((l) => [...l.slice(1), Math.min(1, level * 2.4)]);
+      setElapsed((now - t0) / 1000);
+      // Se corta solo: 1 s de silencio tras hablar, 8 s si nadie habla y 15 s como máximo.
+      if ((heard && now - lastVoice > 1000) || now - t0 > (heard ? MAX_REC * 1000 : 8000)) rec.stop();
     }, 100);
     const end = () => rec.state !== "inactive" && rec.stop();
     stopRec.current = { send: end, cancel: () => ((cancelled = true), end()) };
@@ -221,6 +300,38 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
     };
   }, []);
 
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [log, phase]);
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && close();
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", esc);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [showSettings, setShowSettings] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const onChip = (c: Chip) => {
+    if (!c.fill) return handle(c.text, false);
+    const at = c.text.indexOf("▮");
+    setText(c.text.replace("▮", ""));
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(at, at);
+    });
+  };
+  const submitText = () => {
+    const t = text.trim();
+    if (!t) return;
+    setText("");
+    handle(t, false);
+  };
   const toggle = () => {
     if (phase === "listening") stopRec.current?.send();
     else if (phase === "idle") listen();
@@ -228,21 +339,19 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
   };
 
   return (
-    <Dialog open onOpenChange={(o) => !o && close()} title="Habla con el asistente">
-      <div className="grid gap-3">
-        <button
-          type="button"
-          onClick={toggle}
-          disabled={phase === "thinking"}
-          aria-label={LABEL[phase]}
-          className={`mx-auto grid h-24 w-24 place-items-center rounded-full text-white transition ${phase === "listening" ? "animate-pulse bg-red-500" : phase === "speaking" ? "bg-teal-500" : "bg-teal-700"}`}
-        >
-          {phase === "idle" ? <MicOff size={34} /> : <Mic size={34} />}
-        </button>
-        <p className="text-center text-sm text-slate-500">{LABEL[phase]}</p>
-        <details className="rounded-xl border px-3 py-2 text-sm">
-          <summary className="cursor-pointer font-semibold">Voz y velocidad</summary>
-          <div className="mt-2 grid gap-2">
+    <div className="va-overlay" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <section className="va" role="dialog" aria-modal="true" aria-label="Asistente">
+        <header className="va-head">
+          <span className="va-avatar"><Sparkles size={20} /></span>
+          <div className="va-title">
+            <strong>Asistente</strong>
+            <small className={phase !== "idle" ? "on" : ""}>{STATUS[phase]}</small>
+          </div>
+          <button type="button" className="va-icon" aria-label="Voz y velocidad" aria-expanded={showSettings} onClick={() => setShowSettings((v) => !v)}><Settings2 size={20} /></button>
+          <button type="button" className="va-icon" aria-label="Cerrar" onClick={close}><X size={22} /></button>
+        </header>
+        {showSettings && (
+          <div className="va-settings">
             <label>
               Voz
               <select value={prefs.voice} onChange={(e) => choose({ ...prefs, voice: e.target.value })}>
@@ -259,39 +368,96 @@ export default function VoiceDialog({ close, confirm }: { close: () => void; con
               Probar voz
             </Button>
           </div>
-        </details>
-        {phase === "listening" && (
-          <Button variant="outline" onClick={() => stopRec.current?.cancel()}>Cancelar grabación</Button>
         )}
-        {error && <p className="error">{error}</p>}
-        <div className="grid max-h-60 gap-2 overflow-auto">
+        <div className="va-chat" aria-live="polite">
+          {!log.length && (
+            <div className="va-welcome">
+              <span className="va-avatar big"><Sparkles size={28} /></span>
+              <h2>¿En qué te ayudo?</h2>
+              <p>Pregúntame lo que quieras de tus clientes, trabajos, facturas o almacén, o dime qué apuntar.</p>
+            </div>
+          )}
           {log.map((l, i) => (
-            <div key={i} className={`rounded-xl px-3 py-2 text-sm ${l.who === "tú" ? "ml-8 bg-slate-100" : "mr-8 border"}`}>
-              {l.text}
+            <div key={i} className={`va-msg ${l.who === "tú" ? "me" : "bot"}`}>
+              <div className="va-bubble">{l.text}</div>
+              {l.list && (
+                <div className="va-list">
+                  <div className="va-list-head"><strong>{l.list.title}</strong><span>{l.list.items.length}</span></div>
+                  <ul>
+                    {l.list.items.map((it, j) => {
+                      const inner = (
+                        <>
+                          <span className="va-item-main">
+                            <b>{it.label}</b>
+                            {it.detail && <small>{it.detail}</small>}
+                          </span>
+                          {it.href && <ChevronRight size={18} />}
+                        </>
+                      );
+                      return <li key={j}>{it.href ? <a href={it.href} onClick={close}>{inner}</a> : <div>{inner}</div>}</li>;
+                    })}
+                  </ul>
+                </div>
+              )}
             </div>
           ))}
+          {phase === "thinking" && (
+            <div className="va-msg bot"><div className="va-bubble va-typing" aria-label="Pensando"><i /><i /><i /></div></div>
+          )}
+          {error && <p className="va-error" role="alert">{error}</p>}
+          <div ref={endRef} />
         </div>
         {pending.current && phase === "idle" && (
-          <div className="flex gap-2">
+          <div className="va-confirm">
             <Button onClick={() => handle("sí", false)}>Confirmar y guardar</Button>
             <Button variant="outline" onClick={() => handle("no", false)}>Cancelar</Button>
           </div>
         )}
+        {phase !== "listening" && phase !== "thinking" && !pending.current && !text && (() => {
+          const chips = (log.length ? (follow.length ? follow : []) : SUGGESTIONS).filter((c) => admin || !c.admin);
+          return chips.length ? (
+            <div className="va-chips" role="list" aria-label="Sugerencias">
+              {log.length > 0 && <span className="va-chips-label"><Sparkles size={14} /> Siguiente</span>}
+              {chips.map((c) => (
+                <button key={c.label} type="button" role="listitem" onClick={() => onChip(c)}>{c.label}</button>
+              ))}
+            </div>
+          ) : null;
+        })()}
         <form
-          className="flex gap-2"
+          className="va-bar"
           onSubmit={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            const t = text.trim();
-            if (!t) return;
-            setText("");
-            handle(t, false);
+            submitText();
           }}
         >
-          <input className="flex-1" value={text} onChange={(e) => setText(e.target.value)} placeholder="…o escribe la orden" />
-          <Button variant="outline" disabled={!text.trim() || phase === "thinking"}>Enviar</Button>
+          {phase === "listening" ? (
+            <div className="va-rec" role="status" aria-label="Grabando">
+              <span className="va-rec-dot" />
+              <div className="va-wave" aria-hidden>
+                {levels.map((l, i) => (
+                  <i key={i} style={{ height: `${Math.max(10, l * 100)}%` }} />
+                ))}
+              </div>
+              <span className="va-time">{mmss(elapsed)} / 0:{MAX_REC}</span>
+              <span className="va-prog" style={{ width: `${Math.min(100, (elapsed / MAX_REC) * 100)}%` }} />
+            </div>
+          ) : (
+            <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} placeholder="Escribe o habla…" enterKeyHint="send" aria-label="Escribe tu pregunta u orden" />
+          )}
+          {text.trim() ? (
+            <button type="submit" className="va-mic send" aria-label="Enviar" disabled={phase === "thinking"}><Send size={22} /></button>
+          ) : (
+            <button type="button" className={`va-mic ${phase}`} onClick={toggle} disabled={phase === "thinking"} aria-label={LABEL[phase]}>
+              <Mic size={24} />
+            </button>
+          )}
         </form>
-      </div>
-    </Dialog>
+        {phase === "listening" && (
+          <button type="button" className="va-cancel" onClick={() => stopRec.current?.cancel()}>Cancelar grabación</button>
+        )}
+      </section>
+    </div>
   );
 }

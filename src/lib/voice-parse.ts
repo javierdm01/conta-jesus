@@ -6,7 +6,7 @@ export type Intent =
   | { action: "material"; item: string; quantity: number; customer?: string; job?: string }
   | { action: "contact"; kind: "customer" | "supplier"; name: string; phone?: string }
   | { action: "find"; kind?: "customer" | "supplier"; name: string }
-  | { action: "query"; entity: "jobs" | "unpaid" | "stock" | "hours"; name?: string }
+  | { action: "query"; entity: "jobs" | "unpaid" | "stock" | "hours" | "customers" | "suppliers" | "quotes" | "lowstock"; name?: string }
   | { action: "status"; customer?: string; job?: string; status: "Finalizado" | "En proceso" }
   | { action: "payment"; customer?: string; number?: string; amount: number }
   | { action: "approve"; customer?: string; job?: string };
@@ -79,6 +79,51 @@ export function parseCommand(text: string, known: string[] = []): Intent | null 
   if (job) {
     const [[c0, c1], [n0, n1]] = [job.indices![1], job.indices![2]];
     return { action: "job", customer: cap(text.slice(c0, c1)), name: cap(text.slice(n0, n1)) };
+  }
+  // Crear trabajo sin «que se llame»: «crea un trabajo de instalación de aire a cliente Rodolfo», «crea un trabajo al cliente Rodolfo», «nuevo trabajo para Rodolfo»
+  const j2 = /\b(?:cre|abr|anad|nuev|haz)\w*\s+(?:un\s+|el\s+)?(?:nuevo\s+)?trabajo\b(.*)$/d.exec(n);
+  if (j2) {
+    const rest = n.slice(j2.indices![1][0]), off = j2.indices![1][0];
+    const m =
+      /\s(?:para|a|al|a la|del?)\s+(?:el\s+|la\s+)?cliente\s+(.+)$/d.exec(rest) ??
+      /(?:^|\s)(?:para|al|a la)\s+(?:el\s+|la\s+)?(.+)$/d.exec(rest);
+    if (m) {
+      const [c0, c1] = m.indices![1];
+      const customer = cap(text.slice(off + c0, off + c1).replace(/[?!.¿¡\s]+$/, ""));
+      const name = cap(text.slice(off, off + m.index).replace(/^\s*(?:de|que se llame|que se llama|llamado)\s+/i, "")) || "Trabajo";
+      if (customer) return { action: "job", customer, name };
+    }
+  }
+  // Estado de un trabajo: «marca como finalizado el último trabajo de Rodolfo», «reabre el último trabajo»
+  const done = /\b(?:marca|marcar|pon|poner|deja|dejar|cierra|cerrar|da|dar|termina|terminar|finaliza|finalizar)\w*\b.*\b(?:finalizad\w*|terminad\w*|acabad\w*|cerrad\w*|finalizar|terminar)\b/.test(n);
+  const reopen = /\b(?:reabre|reabrir|reabrelo|reabrela|vuelve a abrir)\b|\b(?:pon|marca|deja)\w*\b.*\ben proceso\b/.test(n);
+  if ((done || reopen) && /\btrabajo\b/.test(n)) {
+    const c = /\b(?:de|del)\s+(?:la\s+)?(?:cliente\s+)?(.+?)\s*[?!.]*$/d.exec(n.replace(/^.*\btrabajo\b/, ""));
+    const tail = n.replace(/^.*\btrabajo\b/, "");
+    const off = n.length - tail.length;
+    const customer = c ? cap(text.slice(off + c.indices![1][0], off + c.indices![1][1])) : knownCustomer(text, n, known);
+    return { action: "status", customer, job: "last", status: reopen && !done ? "En proceso" : "Finalizado" };
+  }
+  // Listados: «sácame una lista de todos los clientes», «muéstrame los trabajos de Rodolfo», «qué facturas tengo pendientes», «material con poco stock»
+  const LISTS: [RegExp, "customers" | "suppliers" | "jobs" | "quotes" | "unpaid" | "lowstock"][] = [
+    [/\bclientes\b/, "customers"],
+    [/\bproveedores\b/, "suppliers"],
+    [/\b(?:presupuestos?)\b/, "quotes"],
+    [/\bfacturas?\b.*\b(?:pendientes?|sin cobrar|por cobrar|impagadas?)\b|\bpendientes? de cobro\b|\bque me deben\b/, "unpaid"],
+    [/\b(?:poco|bajo|sin)\s+(?:stock|material|existencias)\b|\b(?:stock|material|existencias)\s+(?:bajo|minimo)\b|\bse (?:esta )?acaba/, "lowstock"],
+    [/\btrabajos\b/, "jobs"],
+  ];
+  if (/\b(?:list|saca|muestr|ensen|dame|dime|ver|cuales|cuantos|cuantas|que|todos|todas)\w*\b/.test(n) && !/\b(?:crea|crear|nuevo|nueva|abre|anade|agrega)\b/.test(n)) {
+    const hit = LISTS.find(([re]) => re.test(n));
+    if (hit) {
+      let name = "";
+      if (hit[1] === "jobs") {
+        const at = n.search(/trabajos/) + 8;
+        const m = /^\s*(?:de|del|para)\s+(?:el\s+|la\s+)?(?:cliente\s+)?(.+?)\s*[?!.]*$/d.exec(n.slice(at));
+        if (m) name = cap(text.slice(at + m.indices![1][0], at + m.indices![1][1]));
+      }
+      return { action: "query", entity: hit[1], ...(name ? { name } : {}) };
+    }
   }
   // Consulta: «¿me puedes buscar el cliente Francisco Javier?», «dime los datos del proveedor Sonepar»
   const find = /\b(?:busca|buscar|buscame|encuentra|encontrar|encuentrame|dime|muestrame|datos|informacion|donde esta|quien es)\w*\b.*?\b(cliente|proveedor)\s+(.+)$/d.exec(n);

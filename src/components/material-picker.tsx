@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { Search, PenLine } from "lucide-react";
+import { Search, PenLine, Pencil } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -21,17 +21,22 @@ export function MaterialPicker({
   close,
   saved,
   onManual,
+  canEdit,
 }: {
   jobs: { id: string; number: string; name: string }[];
   jobId?: string;
   close: () => void;
   saved: () => Promise<void>;
   onManual?: () => void;
+  canEdit?: boolean;
 }) {
   const [query, setQuery] = useState(""),
     [term, setTerm] = useState(""),
     [job, setJob] = useState(jobId ?? jobs[0]?.id ?? ""),
     [item, setItem] = useState<Item | null>(null),
+    [editing, setEditing] = useState<Item | null>(null),
+    [alias, setAlias] = useState(""),
+    [descr, setDescr] = useState(""),
     [quantity, setQuantity] = useState("1"),
     [notes, setNotes] = useState(""),
     [busy, setBusy] = useState(false),
@@ -41,7 +46,7 @@ export function MaterialPicker({
     const t = setTimeout(() => setTerm(query.trim()), 200);
     return () => clearTimeout(t);
   }, [query]);
-  const { data, error: searchError, isLoading } = useSWR(`/api/search/products?q=${encodeURIComponent(term)}`, fetcher);
+  const { data, error: searchError, isLoading, mutate } = useSWR(`/api/search/products?q=${encodeURIComponent(term)}`, fetcher);
   const waiting = query.trim() !== term || isLoading;
   const submit = async () => {
     if (!item) return;
@@ -62,8 +67,34 @@ export function MaterialPicker({
       setBusy(false);
     }
   };
+  const startEdit = (p: Item) => {
+    setEditing(p);
+    setAlias(p.alias);
+    setDescr(p.description);
+    setError("");
+  };
+  const saveEdit = async () => {
+    if (!editing) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/operations/stock-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lotId: editing.id, alias, description: descr }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw Error(body.error ?? "No se pudo guardar el material.");
+      await mutate();
+      setEditing(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Dialog open onOpenChange={(v) => !v && !busy && close()} title="Añadir material" nested>
+    <Dialog open onOpenChange={(v) => !v && !busy && close()} title={editing ? "Editar material" : "Añadir material"} nested>
       {!jobId && (
         <label>
           Trabajo
@@ -74,7 +105,21 @@ export function MaterialPicker({
           </select>
         </label>
       )}
-      {item ? (
+      {editing ? (
+        <div className="person-list" style={{ flex: 1, overflow: "visible" }}>
+          <label>Nombre corto <span className="font-normal text-slate-400">· como lo llamas tú</span>
+            <input autoFocus value={alias} onChange={(e) => setAlias(e.target.value)} />
+          </label>
+          <label>Descripción
+            <input value={descr} onChange={(e) => setDescr(e.target.value)} />
+          </label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="form-footer">
+            <Button type="button" variant="outline" disabled={busy} onClick={() => setEditing(null)}>Cancelar</Button>
+            <Button type="button" loading={busy} disabled={!descr.trim()} onClick={saveEdit}>{busy ? "Guardando…" : "Guardar"}</Button>
+          </div>
+        </div>
+      ) : item ? (
         <div className="person-list" style={{ flex: 1, overflow: "visible" }}>
           <div className="person-card on">
             <strong>{item.alias || item.description}</strong>
@@ -106,10 +151,17 @@ export function MaterialPicker({
           {searchError && <p className="error" role="alert">{searchError.message}</p>}
           <div className="person-list">
             {data?.items.map((p) => (
-              <button type="button" key={p.id} className="person-card" disabled={!Number(p.onHand)} onClick={() => setItem(p)}>
-                <strong>{p.alias || p.description}</strong>
-                <small>{[p.reference && `Ref. ${p.reference}`, `${p.onHand} ${p.unit} disponibles`].filter(Boolean).join(" · ")}</small>
-              </button>
+              <div key={p.id} className="mat-row">
+                <button type="button" className={`person-card${canEdit ? " has-edit" : ""}`} disabled={!Number(p.onHand)} onClick={() => setItem(p)}>
+                  <strong>{p.alias || p.description}</strong>
+                  <small>{[p.reference && `Ref. ${p.reference}`, `${p.onHand} ${p.unit} disponibles`].filter(Boolean).join(" · ")}</small>
+                </button>
+                {canEdit && (
+                  <button type="button" className="mat-edit" aria-label={`Editar ${p.alias || p.description}`} title="Editar" onClick={() => startEdit(p)}>
+                    <Pencil size={16} />
+                  </button>
+                )}
+              </div>
             ))}
             {data && !data.items.length && <p className="small-note">No hay material con ese nombre. Puedes añadirlo «A mano».</p>}
           </div>

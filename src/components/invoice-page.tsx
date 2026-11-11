@@ -12,7 +12,9 @@ import { PersonPicker } from "./person-picker";
 type InvLine = Line & { discount: string; tax: string };
 const eur = (n: string | number) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n));
 const today = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
-const inv = (p: Partial<InvLine> = {}): InvLine => ({ ...newLine(p), discount: "0", tax: "21", ...p });
+// shortcut: IVA por defecto en una variable de módulo (se fija al montar la página) para no pasarlo a cada línea; sirve mientras haya una sola factura abierta.
+let defaultTax = "21";
+const inv = (p: Partial<InvLine> = {}): InvLine => ({ ...newLine(p), discount: "0", tax: defaultTax, ...p });
 const net = (l: InvLine) => {
   try {
     return l.quantity && l.price ? lineNet(l.quantity, l.price, l.discount || 0) : "0.00";
@@ -22,11 +24,11 @@ const net = (l: InvLine) => {
 };
 const HOURS_DESC = "Mano de obra";
 /** Una línea con las horas facturables del trabajo. shortcut: precio sugerido = coste medio/hora + 30 % (como el material), editable; sin horas facturadas antes no hay forma de saber cuáles ya se cobraron. */
-const hoursLine = (j?: Job): InvLine | null => {
+const hoursLine = (j?: Job, rate?: string): InvLine | null => {
   const h = (j?.hours ?? []).filter((x) => x.billable !== false).reduce((a, x) => a.plus(x.hours), dec(0));
   if (h.lte(0)) return null;
   const m = j?.metrics;
-  const price = m && Number(m.hours) > 0 ? cents(dec(m.labor).div(m.hours).mul("1.30")) : "0.00";
+  const price = Number(rate) > 0 ? cents(rate!) : m && Number(m.hours) > 0 ? cents(dec(m.labor).div(m.hours).mul("1.30")) : "0.00";
   return inv({ description: HOURS_DESC, unit: "h", quantity: h.toString(), price });
 };
 async function post(url: string, body?: unknown) {
@@ -41,7 +43,11 @@ export default function InvoicePage({
   jobs,
   customers,
   jobId,
+  quoteId,
   sales,
+  defaultRate,
+  defaultTax: taxProp,
+  mode = "invoice",
   templates,
   refresh,
   onDone,
@@ -49,17 +55,23 @@ export default function InvoicePage({
   jobs: Job[];
   customers: Customer[];
   jobId?: string;
+  quoteId?: string;
   sales: Sale[];
+  defaultRate?: string;
+  defaultTax?: string;
+  mode?: "invoice" | "quote";
   templates: State["templates"];
   refresh: () => Promise<void>;
   onDone: () => void;
 }) {
+  defaultTax = String(Number(taxProp ?? 21));
+  const isQuote = mode === "quote";
   const year = new Date().getFullYear();
   const startJob = jobs.find((j) => j.id === jobId);
   const [customerId, setCustomerId] = useState(startJob?.customer.id ?? ""),
     [job, setJob] = useState(startJob?.id ?? ""),
-    [serie, setSerie] = useState(`F-${year}`),
-    [numero, setNumero] = useState(() => String(sales.filter((s) => s.date.startsWith(String(year))).length + 1).padStart(3, "0")),
+    [serie, setSerie] = useState(`${isQuote ? "P" : "F"}-${year}`),
+    [numero, setNumero] = useState(() => String((isQuote ? jobs.flatMap((j) => j.quotes) : sales).filter((s) => (s.date ?? "").startsWith(String(year))).length + 1).padStart(3, "0")),
     [date, setDate] = useState(today()),
     [dueAt, setDueAt] = useState(""),
     [notes, setNotes] = useState(""),
@@ -110,7 +122,7 @@ export default function InvoicePage({
     }
   };
   const addHours = () => {
-    const l = hoursLine(current);
+    const l = hoursLine(current, [customers.find((c) => c.id === customerId)?.hourlyRate, defaultRate].find((r) => Number(r) > 0));
     if (!l) return setInfo("No hay horas facturables en el trabajo.");
     setLines((cur) => {
       const at = cur.findIndex((x) => x.description === HOURS_DESC);
@@ -123,6 +135,13 @@ export default function InvoicePage({
   // Al facturar desde un trabajo se cargan sus materiales y horas. Las horas solo si aún no hay facturas: no se registra cuáles se cobraron.
   useEffect(() => {
     if (!startJob) return;
+    // Facturar desde un presupuesto aprobado: se cargan sus líneas tal cual.
+    const fromQuote = quoteId ? startJob.quotes.find((x) => x.id === quoteId) : undefined;
+    if (fromQuote) {
+      const ql = fromQuote.lines?.length ? fromQuote.lines.map((l) => inv({ description: l.description, unit: l.unit, quantity: l.quantity, price: l.price, discount: l.discount ?? "0" })) : quoteLines(fromQuote.id);
+      setLines(ql);
+      return;
+    }
     void loadMaterials();
     if (!startJob.sales.length) addHours();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -141,6 +160,19 @@ export default function InvoicePage({
     setBusy(true);
     setError("");
     try {
+      if (isQuote)
+        await post("/api/operations/quote-save", {
+          jobId: job,
+          number,
+          date,
+          validUntil: dueAt || undefined,
+          net: base,
+          tax,
+          notes,
+          requestKey: key,
+          lines: lines.map(({ description, unit, quantity, price, discount }) => ({ description, unit, quantity, price, discount: discount || "0" })),
+        });
+      else
       await post("/api/operations/sale", {
         jobId: job,
         number,
@@ -167,15 +199,15 @@ export default function InvoicePage({
   return (
     <div className="inv-page">
       <nav className="inv-crumbs" aria-label="Ruta">
-        <Link href="/facturas">Facturas</Link>
+        <Link href={isQuote ? "/presupuestos" : "/facturas"}>{isQuote ? "Presupuestos" : "Facturas"}</Link>
         <ChevronRight size={14} />
-        <span>Nueva factura</span>
+        <span>{isQuote ? "Nuevo presupuesto" : "Nueva factura"}</span>
         <div className="inv-top">
-          <span className="inv-pill"><Clock size={14} /> Pendiente de cobro</span>
+          <span className="inv-pill"><Clock size={14} /> {isQuote ? "Pendiente de aprobar" : "Pendiente de cobro"}</span>
           <span className="inv-pill">Total: <b>{eur(total)}</b></span>
           <Button variant="outline" onClick={onDone} disabled={busy}>Cancelar</Button>
           <Button loading={busy} disabled={!valid} onClick={submit}>
-            {!busy && <Save size={16} />} {busy ? "Guardando…" : "Guardar factura"}
+            {!busy && <Save size={16} />} {busy ? "Guardando…" : isQuote ? "Guardar presupuesto" : "Guardar factura"}
           </Button>
         </div>
       </nav>
@@ -197,7 +229,7 @@ export default function InvoicePage({
             />
           </div>
           <div className="inv-fields">
-            <label>Fecha factura<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+            <label>{isQuote ? "Fecha presupuesto" : "Fecha factura"}<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
             <label>Trabajo
               <select value={job} onChange={(e) => setJob(e.target.value)} disabled={!customerJobs.length}>
                 {!customerJobs.length && <option value="">{customerId ? "Sin trabajos" : "Elige cliente"}</option>}
@@ -205,8 +237,8 @@ export default function InvoicePage({
               </select>
             </label>
             <label>Serie<input value={serie} onChange={(e) => setSerie(e.target.value)} /></label>
-            <label>Vencimiento<input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></label>
-            <label>Retención IRPF (%)<input type="number" min="0" max="100" step="any" value={ret} onChange={(e) => setRet(e.target.value)} /></label>
+            <label>{isQuote ? "Válido hasta" : "Vencimiento"}<input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} /></label>
+            {!isQuote && <label>Retención IRPF (%)<input type="number" min="0" max="100" step="any" value={ret} onChange={(e) => setRet(e.target.value)} /></label>}
             <label>Número<input value={numero} onChange={(e) => setNumero(e.target.value)} /></label>
           </div>
         </div>
@@ -228,7 +260,7 @@ export default function InvoicePage({
               {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           )}
-          {quotesWithLines.length > 0 && (
+          {!isQuote && quotesWithLines.length > 0 && (
             <select className="lines-select" aria-label="Usar presupuesto" value="" onChange={(e) => e.target.value && setLines((ls) => [...ls, ...quoteLines(e.target.value)])}>
               <option value="">Desde presupuesto…</option>
               {quotesWithLines.map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}
@@ -254,7 +286,7 @@ export default function InvoicePage({
                   <td className="num"><input aria-label="Descuento" type="number" min="0" max="100" step="any" value={l.discount} onChange={(e) => set(l.key, { discount: e.target.value })} /></td>
                   <td className="num">
                     <select aria-label="Impuesto" value={l.tax} onChange={(e) => set(l.key, { tax: e.target.value })}>
-                      {["21", "10", "4", "0"].map((x) => <option key={x} value={x}>{x} %</option>)}
+                      {[...new Set(["21", "10", "4", "0", l.tax])].map((x) => <option key={x} value={x}>{x} %</option>)}
                     </select>
                   </td>
                   <td className="num"><strong>{eur(net(l))}</strong></td>
@@ -296,10 +328,28 @@ export default function InvoicePage({
           </div>
           <dl className="inv-totals">
             <div><dt>Base imponible</dt><dd>{eur(base)}</dd></div>
-            <div><dt>Impuestos</dt><dd>{eur(tax)}</dd></div>
+            <div>
+              <dt>
+                Impuestos
+                <input
+                  className="tax-all"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="any"
+                  aria-label="Porcentaje de impuestos de todas las líneas"
+                  placeholder="Mixto"
+                  disabled={!lines.length}
+                  value={lines.length && lines.every((l) => l.tax === lines[0].tax) ? lines[0].tax : ""}
+                  onChange={(e) => setLines((ls) => ls.map((l) => ({ ...l, tax: e.target.value })))}
+                />
+                %
+              </dt>
+              <dd>{eur(tax)}</dd>
+            </div>
             {Number(withholding) > 0 && <div><dt>Retención {ret} %</dt><dd>−{eur(withholding)}</dd></div>}
             <div className="grand"><dt>Total</dt><dd>{eur(total)}</dd></div>
-            <div className="paid"><dt>Ya cobrado (€)</dt><dd><input type="number" min="0" step="any" value={collected} onChange={(e) => setCollected(e.target.value)} /></dd></div>
+            {!isQuote && <div className="paid"><dt>Ya cobrado (€)</dt><dd><input type="number" min="0" step="any" value={collected} onChange={(e) => setCollected(e.target.value)} /></dd></div>}
           </dl>
         </div>
         {error && <p className="error" role="alert">{error}</p>}

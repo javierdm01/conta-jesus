@@ -68,12 +68,14 @@ export function QuoteBuilder({
   jobs,
   jobId,
   workers,
+  defaultMargin,
   close,
   saved,
 }: {
   jobs: Job[];
   jobId?: string;
   workers: Worker[];
+  defaultMargin?: string;
   close: () => void;
   saved: () => Promise<void>;
 }) {
@@ -85,7 +87,7 @@ export function QuoteBuilder({
       const w = jobs.find((j) => j.id === (jobId ?? jobs[0]?.id))?.worker;
       return String(workers.find((x) => x.id === w?.id)?.hourlyCost ?? "");
     }),
-    [margin, setMargin] = useState("25"),
+    [margin, setMargin] = useState(String(Number(defaultMargin ?? 25))),
     [extra, setExtra] = useState({ travel: "0", subcontract: "0", other: "0", overhead: "0" }),
     [picker, setPicker] = useState(false),
     [busy, setBusy] = useState(false),

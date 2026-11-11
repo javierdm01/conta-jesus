@@ -1,20 +1,64 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { FileUp, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileUp, Plus, Search, Trash2 } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { parseCatalogCsv, type CatalogRow } from "@/lib/catalog-csv";
 import { parseSoneparJson } from "@/lib/catalog-sonepar";
 
-type Item = CatalogRow & { id: string; supplier: string };
+const PAGE = 50;
+const KIND: Record<string, string> = { DELIVERY: "Albarán", PURCHASE: "Factura de proveedor", CREDIT: "Abono" };
+type Use = { id: string; documentId: string; kind: string; number: string | null; date: string | null; supplier: string; job: { id: string; name: string } | null; quantity: string; unit: string; price: string | null; discount: string };
+const day = (d: string | null) => (d ? new Date(d).toLocaleDateString("es-ES") : "—");
+
+// En qué albaranes y facturas de proveedor aparece el artículo, con el precio pagado en cada compra.
+function Usage({ id }: { id: string }) {
+  const { data, error } = useSWR<{ uses: Use[] }>(`/api/search/catalog/${id}`, async (u: string) => {
+    const r = await fetch(u);
+    const b = await r.json();
+    if (!r.ok) throw Error(b.error);
+    return b;
+  });
+  if (error) return <p className="error">{error.message}</p>;
+  if (!data) return <Spinner />;
+  if (!data.uses.length) return <p className="small-note">Todavía no aparece en ningún albarán ni factura (se busca por su referencia).</p>;
+  const prices = data.uses.map((x) => Number(x.price)).filter((x) => x > 0);
+  const last = data.uses.find((x) => Number(x.price) > 0);
+  return (
+    <>
+      {prices.length > 0 && (
+        <p className="small-note">
+          Último precio pagado: <b>{eur(String(last!.price))}</b> ({day(last!.date)}) · mínimo {eur(String(Math.min(...prices)))} · máximo {eur(String(Math.max(...prices)))} · {data.uses.length} compras
+        </p>
+      )}
+      <table>
+        <thead><tr><th>Fecha</th><th>Documento</th><th>Proveedor</th><th>Trabajo</th><th>Cantidad</th><th>Precio</th></tr></thead>
+        <tbody>
+          {data.uses.map((x) => (
+            <tr key={x.id}>
+              <td>{day(x.date)}</td>
+              <td>{KIND[x.kind] ?? x.kind} {x.number ?? ""}</td>
+              <td>{x.supplier || "—"}</td>
+              <td>{x.job?.name ?? "—"}</td>
+              <td>{Number(x.quantity)} {x.unit}</td>
+              <td>{x.price ? `${eur(x.price)}${Number(x.discount) ? ` (−${Number(x.discount)} %)` : ""}` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+type Item = CatalogRow & { id: string; supplier: string; supplierRef: string };
 const eur = (n: string) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n));
 const fetcher = async (url: string) => {
   const r = await fetch(url);
   const b = await r.json();
   if (!r.ok) throw Error(b.error);
-  return b as { items: Item[]; total: number; all: number };
+  return b as { items: Item[]; total: number; all: number; noPrice: number };
 };
 async function op(action: string, body: unknown) {
   const r = await fetch(`/api/operations/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -27,6 +71,9 @@ async function op(action: string, body: unknown) {
 export default function Catalog() {
   const [query, setQuery] = useState(""),
     [term, setTerm] = useState(""),
+    [page, setPage] = useState(1),
+    [noPrice, setNoPrice] = useState(false),
+    [open, setOpen] = useState(""),
     [adding, setAdding] = useState(false),
     [draft, setDraft] = useState<CatalogRow>({ reference: "", description: "", brand: "", unit: "ud", price: "" }),
     [busy, setBusy] = useState(false),
@@ -34,10 +81,10 @@ export default function Catalog() {
     [error, setError] = useState(""),
     file = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    const t = setTimeout(() => setTerm(query.trim()), 200);
+    const t = setTimeout(() => { setTerm(query.trim()); setPage(1); }, 200);
     return () => clearTimeout(t);
   }, [query]);
-  const { data, mutate, isLoading } = useSWR(`/api/search/catalog?limit=100&q=${encodeURIComponent(term)}`, fetcher);
+  const { data, mutate, isLoading } = useSWR(`/api/search/catalog?pageSize=${PAGE}&page=${page}${noPrice ? "&filter=noprice" : ""}&q=${encodeURIComponent(term)}`, fetcher);
   const importFile = async (f: File) => {
     setBusy(true);
     setError("");
@@ -99,6 +146,12 @@ export default function Catalog() {
         {isLoading ? <Spinner /> : <Search size={16} />}
         <input type="search" placeholder="Buscar por nombre, marca o referencia" value={query} onChange={(e) => setQuery(e.target.value)} />
       </label>
+      {data && data.noPrice > 0 && (
+        <p className="small-note mb-4">
+          {data.noPrice} artículos sin precio.{" "}
+          <button type="button" className="text-button" onClick={() => { setNoPrice(!noPrice); setPage(1); }}>{noPrice ? "Ver todos" : "Ver solo los que no tienen precio"}</button>
+        </p>
+      )}
       {!data ? (
         <div className="skeleton" style={{ height: 220, borderRadius: 16 }} role="status" aria-label="Cargando" />
       ) : data.items.length ? (
@@ -106,15 +159,17 @@ export default function Catalog() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Referencia</th><th>Descripción</th><th>Marca</th><th>Proveedor</th><th>Unidad</th><th>Precio</th><th /></tr>
+                <tr><th>Referencia</th><th>Descripción</th><th>Marca</th><th>Proveedor</th><th>Ref. prov.</th><th>Unidad</th><th>Precio</th><th /></tr>
               </thead>
               <tbody>
                 {data.items.map((i) => (
-                  <tr key={i.id}>
+                  <Fragment key={i.id}>
+                  <tr style={{ cursor: "pointer" }} onClick={() => setOpen(open === i.id ? "" : i.id)} aria-expanded={open === i.id}>
                     <td>{i.reference || "—"}</td>
                     <td style={{ whiteSpace: "normal" }}>{i.description}</td>
                     <td>{i.brand || "—"}</td>
                     <td>{i.supplier || "—"}</td>
+                    <td>{i.supplierRef || "—"}</td>
                     <td>{i.unit}</td>
                     <td>{Number(i.price) > 0 ? eur(i.price) : <span className="muted">Sin precio</span>}</td>
                     <td>
@@ -122,7 +177,8 @@ export default function Catalog() {
                         type="button"
                         aria-label={`Borrar ${i.description}`}
                         className="text-button"
-                        onClick={async () => {
+                        onClick={async (e) => {
+                          e.stopPropagation();
                           await op("catalog-delete", { id: i.id }).catch((e) => setError(e.message));
                           await mutate();
                         }}
@@ -131,13 +187,22 @@ export default function Catalog() {
                       </button>
                     </td>
                   </tr>
+                  {open === i.id && <tr><td colSpan={8} style={{ whiteSpace: "normal" }}><b>Dónde aparece</b><Usage id={i.id} /></td></tr>}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="small-note" style={{ padding: "12px 20px" }}>
-            {data.total > data.items.length ? `Mostrando ${data.items.length} de ${data.total}. Afina la búsqueda para ver el resto.` : `${data.total} artículos`}
+            {data.total} artículos · pulsa uno para ver en qué facturas aparece
           </p>
+          {data.total > PAGE && (
+            <div className="form-footer" style={{ padding: "0 20px 16px", justifyContent: "center", alignItems: "center", gap: 12 }}>
+              <Button variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={16} />Anterior</Button>
+              <span className="small-note">Página {page} de {Math.ceil(data.total / PAGE)}</span>
+              <Button variant="outline" disabled={page >= Math.ceil(data.total / PAGE)} onClick={() => setPage(page + 1)}>Siguiente<ChevronRight size={16} /></Button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="empty">

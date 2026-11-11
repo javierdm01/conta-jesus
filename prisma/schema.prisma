@@ -11,6 +11,10 @@ model Company {
   id             String          @id @default(cuid())
   name           String
   taxId          String          @default("")
+  defaultMargin  Decimal         @default(30) @db.Decimal(6, 2)
+  defaultHourlyRate Decimal      @default(0) @db.Decimal(12, 4)
+  defaultTax     Decimal         @default(21) @db.Decimal(5, 2)
+  defaultQuoteMargin Decimal     @default(25) @db.Decimal(5, 2)
   createdAt      DateTime        @default(now())
   users          User[]
   customers      Customer[]
@@ -128,6 +132,7 @@ model Customer {
   phone     String                @default("")
   email     String                @default("")
   address   String                @default("")
+  hourlyRate Decimal              @default(0) @db.Decimal(12, 4)
   jobs      Job[]
   equipment Equipment[]
   contracts MaintenanceContract[]
@@ -503,6 +508,14 @@ model Quote {
   plannedHours Decimal  @db.Decimal(7, 2)
   approved     Boolean  @default(false)
   createdAt    DateTime @default(now())
+  // Presupuesto con líneas (como una factura, pero sin entrar en contabilidad).
+  number       String   @default("")
+  date         DateTime @default(now())
+  validUntil   DateTime?
+  tax          Decimal  @default(0) @db.Decimal(14, 2)
+  notes        String   @default("")
+  lines        Json     @default("[]")
+  requestKey   String?  @unique
 }
 
 model Overhead {

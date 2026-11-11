@@ -6,6 +6,7 @@ export type Customer = {
   phone: string;
   email: string;
   address: string;
+  hourlyRate?: string;
 };
 export type Supplier = {
   id: string;
@@ -46,6 +47,12 @@ export type Quote = {
   net: string;
   plannedHours: string;
   approved: boolean;
+  number?: string;
+  date?: string;
+  validUntil?: string | null;
+  tax?: string;
+  notes?: string;
+  lines?: { description: string; unit: string; quantity: string; price: string; discount?: string; net: string }[];
 };
 export type Sale = {
   id: string;
@@ -130,7 +137,7 @@ export type TemplateLine = { description: string; unit: string; quantity: string
 export type State = {
   templates: { id: string; name: string; lines: TemplateLine[] }[];
   user: { id: string; name: string; role: string; workerId?: string; homeLayout?: unknown };
-  company: { name: string; taxId?: string };
+  company: { name: string; taxId?: string; defaultMargin?: string; defaultHourlyRate?: string; defaultTax?: string; defaultQuoteMargin?: string };
   jobs: Job[];
   customers: Customer[];
   suppliers: Supplier[];
