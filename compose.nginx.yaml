@@ -1,0 +1,14 @@
+# Despliegue detrás del nginx del servidor: sin Caddy y sin puertos publicados.
+# Solo "web" se une a nginx_network (alias conta-web); db/worker/backup quedan en la red privada del proyecto.
+services:
+  caddy:
+    profiles: ["off"]
+  web:
+    ports: !reset []
+    networks:
+      default: {}
+      nginx_network:
+        aliases: [conta-web]
+networks:
+  nginx_network:
+    external: true
