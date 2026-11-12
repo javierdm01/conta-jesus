@@ -27,7 +27,7 @@ export function parsePrice(raw: string) {
   return Number.isFinite(n) && n >= 0 ? String(n) : null;
 }
 
-function splitLine(line: string, sep: string) {
+export function splitLine(line: string, sep: string) {
   const out: string[] = [];
   let cur = "",
     quoted = false;

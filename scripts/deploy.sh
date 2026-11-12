@@ -58,8 +58,14 @@ EOF
 fi
 
 mkdir -p backups
+mkdir -p data/automation/sonepar
+# El servicio usa el usuario node (uid 1000) de la imagen.
+chmod 700 data/automation/sonepar
 echo "Construyendo la aplicación…"
-docker compose build web
+# `docker compose up --no-build` exige que todas las imágenes de servicios
+# construidos localmente existan. Además de la web, se usan los servicios de
+# voz para transcripción y síntesis.
+docker compose build web whisper tts
 echo "Arrancando servicios…"
 docker compose up -d --no-build
 

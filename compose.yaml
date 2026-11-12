@@ -63,6 +63,20 @@ services:
     restart: unless-stopped
     mem_limit: 3000m
     cpus: 2.0
+  sonepar:
+    <<: *application
+    command: ["node", "--import", "tsx", "scripts/sonepar-automation.ts"]
+    environment:
+      DATABASE_URL: postgresql://instala:${POSTGRES_PASSWORD}@db:5432/instala
+      SONEPAR_COMPANY_ID: ${SONEPAR_COMPANY_ID:-}
+      SONEPAR_EXCHANGE_DIR: /app/data/sonepar
+    volumes: ["./data/automation/sonepar:/app/data/sonepar"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
   whisper:
     build: ./voice
     environment:

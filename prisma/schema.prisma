@@ -632,6 +632,8 @@ model CatalogItem {
   // Precio actual en el proveedor (Sonepar, neto por unidad) y cuándo se leyó; «price» es lo que pagas tú.
   currentPrice   Decimal? @db.Decimal(14, 4)
   currentPriceAt DateTime?
+  supplierGrossPrice Decimal? @db.Decimal(14, 4)
+  supplierPriceSource String @default("")
   imageUrl    String   @default("")
   createdAt   DateTime @default(now())
 

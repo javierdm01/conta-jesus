@@ -7,6 +7,8 @@
     "build": "prisma generate && next build",
     "start": "next start --hostname 0.0.0.0",
     "worker": "node --env-file-if-exists=.env --import tsx worker/index.ts",
+    "sonepar": "node --env-file-if-exists=.env --import tsx scripts/sonepar-automation.ts",
+    "sonepar:export-csv": "node --import tsx scripts/export-sonepar-csv.ts",
     "db:migrate": "prisma migrate deploy",
     "bootstrap": "node --env-file-if-exists=.env --import tsx scripts/bootstrap.ts",
     "reset-password": "node --env-file-if-exists=.env --import tsx scripts/reset-password.ts",
