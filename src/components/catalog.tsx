@@ -158,7 +158,7 @@ export default function Catalog() {
                       </div>
                     </td>
                     <td data-label="Pagado (último)" style={{ whiteSpace: "nowrap" }}>{Number(i.price) > 0 ? <span className="price-box"><b>{eur(i.price)}</b><small className="muted">/ {i.unit}</small></span> : <span className="muted">Sin precio</span>}</td>
-                    <td data-label="Hoy en Sonepar" style={{ whiteSpace: "nowrap" }}>{i.currentPrice ? <b>{eur(i.currentPrice)}</b> : <span className="muted">—</span>}</td>
+                    <td data-label="Hoy en Sonepar" style={{ whiteSpace: "nowrap" }}>{i.currentPrice ? <span className="price-box"><b>{eur(i.currentPrice)}</b><small className="muted">/ {i.unit}</small></span> : <span className="muted">—</span>}</td>
                     <td data-label="Variación">
                       {(() => {
                         const v = variation(Number(i.price), Number(i.currentPrice));

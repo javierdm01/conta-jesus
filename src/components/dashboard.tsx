@@ -1412,7 +1412,7 @@ export function Dashboard({
                         {x.lines.map((l) => (
                           <p key={l.id}>
                             <strong>{l.description}</strong> · {l.quantity}{" "}
-                            {l.unit} × {euro(l.price)} = {euro(l.net)}
+                            {l.unit} × {euro(l.price)}/{l.unit} = {euro(l.net)}
                           </p>
                         ))}
                       </details>

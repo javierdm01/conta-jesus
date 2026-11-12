@@ -62,7 +62,7 @@ export default function InvoiceDetail({ sale, job, onPayment, onDelete, document
                 <tr key={l.id}>
                   <td style={{ padding: "10px 6px" }}>{l.description}</td>
                   <td className="num">{Number(l.quantity)} {l.unit}</td>
-                  <td className="num">{eur(l.price)}</td>
+                  <td className="num">{eur(l.price)}{l.unit && l.unit !== "ud" ? <small className="muted"> / {l.unit}</small> : null}</td>
                   <td className="num">{Number(l.discount) ? `${Number(l.discount)} %` : ""}</td>
                   <td className="num"><strong>{eur(l.net)}</strong></td>
                 </tr>

@@ -74,20 +74,24 @@ export async function createAdapter(context: BrowserContext, products: { supplie
             if (r.unit && r.byUnit && r.byUnit.replace(/\s/g, "") === `${n}/${r.unit}`.replace(/\s/g, "")) {
               unitGross = amount(g); unitNet = amount(n);
             }
-            if (shown.includes(g) && shown.includes(n)) {
-              if (r.quantity === "1" && r.unit === "Unid.") { gross = amount(g); net = amount(n); }
-              else if (!r.unit) { gross = amount(g); net = amount(n); }
-            }
+            if (shown.includes(g) && shown.includes(n)) { gross = amount(g); net = amount(n); }
           }
           await page.keyboard.press("Escape");
         }
       }
       const classified = gross !== null && net !== null;
-      // Sin etiqueta «por Unid.»: se acepta solo si el selector de cantidad está en 1 y su total es exactamente el neto.
+      // El importe del desglose es por unidad (o por metro) aunque la tarjeta diga «por 100 Unid.»: esa cifra es el escalón del selector.
+      // Solo se acepta si el total del selector es exactamente cantidad × neto, o si el portal da «neto/unidad» (p. ej. 1,66 €/metro).
+      const unitKind = r.unit === null ? null : /^metros?$/i.test(r.unit) ? "metros" : /^Unid\.$/i.test(r.unit) ? "Unid." : "otra";
       const selector = r.visible.match(/Selector de cantidad\s+(\d+)\s+((?:\d{1,3}(?:\.\d{3})*|\d+),\d+\s*€)\s*$/);
-      const inferred = classified && !r.unit && !!selector && selector[1] === "1" && amount(selector[2]) === net;
-      const supported = (classified && r.quantity === "1" && r.unit === "Unid.") || inferred;
-      result.push({ supplierRef: r.supplierRef, precioBruto: gross, precioNeto: net, precioBrutoUnitario: unitGross, precioNetoUnitario: unitNet, precioMostradoSinClasificar: !classified && shown.length ? amount(shown[0]) : null, moneda: shown.length ? "EUR" : null, unidad: inferred ? "Unid." : r.unit, cantidadPrecioMostrado: inferred ? "1" : r.quantity, packaging: inferred ? "selector de cantidad = 1" : r.unitText, fechaConsulta: new Date().toISOString(), fuente: source, estado: supported ? "verified_unit" : shown.length ? "ambiguous" : "missing", observaciones: inferred ? "Unidad deducida: el total con cantidad 1 coincide con el neto" : supported ? null : `Unidad o clasificación sin verificar${!r.unit && classified ? "; importes etiquetados bruto y neto, base de precio no verificada" : ""}; importes visibles: ${shown.join(", ")}` });
+      const selectorTotal = selector ? amount(selector[2]) : null;
+      const selectorOk = classified && !!selector && selectorTotal !== null && Math.abs(Number(selector[1]) * Number(net) - Number(selectorTotal)) <= 0.0051 + Number(selector[1]) * 0.00005;
+      const byUnitOk = classified && unitNet !== null && unitNet === net;
+      const verifiedUnit = unitKind === "otra" ? null : unitKind ?? (selectorOk ? "Unid." : null);
+      const legacyOk = classified && r.quantity === "1" && r.unit === "Unid.";
+      const supported = legacyOk || (classified && verifiedUnit !== null && (selectorOk || byUnitOk));
+      const inferred = supported && !r.unit;
+      result.push({ supplierRef: r.supplierRef, precioBruto: gross, precioNeto: net, precioBrutoUnitario: unitGross, precioNetoUnitario: unitNet, precioMostradoSinClasificar: !classified && shown.length ? amount(shown[0]) : null, moneda: shown.length ? "EUR" : null, unidad: supported ? verifiedUnit : r.unit, cantidadPrecioMostrado: supported ? "1" : r.quantity, packaging: r.unitText, fechaConsulta: new Date().toISOString(), fuente: source, estado: supported ? "verified_unit" : shown.length ? "ambiguous" : "missing", observaciones: supported ? (inferred ? "Unidad deducida: el total del selector coincide con cantidad × neto" : r.quantity !== "1" && r.quantity ? `Importe por unidad verificado con el selector (el portal indica «${r.unitText}»: es el escalón de venta)` : null) : `Unidad o clasificación sin verificar${!r.unit && classified ? "; importes etiquetados bruto y neto, base de precio no verificada" : ""}; importes visibles: ${shown.join(", ")}` });
     }
     return result.map(row => ({ ...row, imageUrl: raw.find(r => r.supplierRef === row.supplierRef)?.imageUrl ?? null }));
   }
