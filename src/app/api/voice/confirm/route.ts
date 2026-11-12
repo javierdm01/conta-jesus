@@ -6,7 +6,7 @@ import { apiError } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 // Solo las acciones que el asistente puede proponer; cada ejecución queda en el registro, a nombre de quien la confirmó.
-const ALLOWED = new Set(["hours", "stock-move", "overhead", "job", "customer", "supplier", "status", "payment", "approveQuote"]);
+const ALLOWED = new Set(["hours", "stock-move", "cost", "overhead", "job", "customer", "supplier", "status", "payment", "approveQuote"]);
 export async function POST(req: Request) {
   try {
     checkOrigin(req);

@@ -32,6 +32,9 @@ def kokoro():
         _kokoro = Kokoro("/app/kokoro.onnx", "/app/kokoro-voices.bin")
     return _kokoro
 
+# La voz por defecto del asistente es Kokoro (k-dora): se carga y calienta al arrancar, no con la primera frase (3,5 s de espera).
+kokoro().create("Hola.", voice="ef_dora", speed=1.0, lang="es")
+
 @app.get("/health")
 def health():
     return {"ok": True, "voices": list(KOKORO) + list(VOICES)}

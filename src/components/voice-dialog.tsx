@@ -4,7 +4,7 @@ import { ChevronRight, Mic, Send, Settings2, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Proposal } from "@/lib/voice";
 
-type ListData = { title: string; items: { label: string; detail?: string; href?: string }[] };
+type ListData = { title: string; items: { label: string; detail?: string; href?: string; pick?: string }[] };
 type Reply = { transcript?: string; proposal?: Proposal; message?: string; error?: string; list?: ListData; ask?: { options: string[] } };
 type Phase = "idle" | "listening" | "thinking" | "speaking";
 type Line = { who: "tú" | "asistente"; text: string; list?: ListData };
@@ -65,26 +65,19 @@ const LOW = C("Material con poco stock", "Dime el material con poco stock");
 const MONTH_HOURS = C("Horas de este mes", "¿Cuántas horas llevo este mes?");
 // Después de guardar una acción (action = la que confirma el servidor; summary = el texto que se le leyó al usuario).
 function followUps(action: string, payload: Record<string, unknown>, summary: string): Chip[] {
-  const parts = summary.split(" · ");
+  const c = customerOf(action, payload, summary);
   switch (action) {
-    case "customer": {
-      const n = String(payload.name ?? "");
-      return [C("Crear un trabajo", `Crea un trabajo para ${n}`, { admin: true }), C("Ver sus trabajos", `Muéstrame los trabajos de ${n}`), C("Lista de clientes", "Sácame una lista de todos los clientes", { admin: true })];
-    }
+    case "customer":
+      return [C("Crear un trabajo", `Crea un trabajo para ${c}`, { admin: true }), C("Ver sus trabajos", `Muéstrame los trabajos de ${c}`), C("Lista de clientes", "Sácame una lista de todos los clientes", { admin: true })];
     case "supplier":
       return [C("Lista de proveedores", "Sácame la lista de proveedores", { admin: true }), LOW, C("Añadir otro proveedor", "Créame al proveedor ▮", { fill: true, admin: true })];
-    case "job": {
-      const c = /para (.+)$/.exec(summary)?.[1];
-      return [HOURS(c), MATERIAL(c), C("Crear presupuesto", "¿Qué presupuestos hay pendientes?", { admin: true })];
-    }
-    case "hours": {
-      const c = parts[3];
+    case "job":
+      return [HOURS(c), MATERIAL(c), C("Presupuestos pendientes", "¿Qué presupuestos hay pendientes?", { admin: true })];
+    case "hours":
       return [MATERIAL(c), FINISH(c), MONTH_HOURS];
-    }
-    case "stock-move": {
-      const c = parts[1];
+    case "stock-move":
+    case "cost":
       return [HOURS(c), FINISH(c), LOW];
-    }
     case "status":
       return /finalizado/i.test(summary) ? [UNPAID, OWED, OPEN] : [HOURS(), MATERIAL(), OPEN];
     case "overhead":
@@ -112,7 +105,25 @@ const FALLBACK: Chip[] = [C("Crear un cliente", "Créame al cliente ▮", { fill
 // Conversación guiada: si falta un dato (horas, día, material, trabajo) el asistente lo pregunta en vez de inventarlo.
 type Flow = { kind: "hours" | "material"; customer?: string; step: "range" | "day" | "job" | "item"; data: { range?: string; day?: string; item?: string } };
 const DAY_CHIPS: Chip[] = [C("Hoy", "hoy"), C("Ayer", "ayer"), C("Anteayer", "anteayer")];
-const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+// 0,1 s de silencio real para «desbloquear» el audio con el primer toque (iOS no deja sonar después sin él). Va como
+// blob: porque la CSP (next.config.ts, media-src 'self' blob:) bloquea los data: y con un WAV vacío tampoco desbloquea.
+const silentWav = () => {
+  const n = 800, le = (v: number, b: number) => String.fromCharCode(...Array.from({ length: b }, (_, i) => (v >> (8 * i)) & 255));
+  const s = "RIFF" + le(36 + n, 4) + "WAVEfmt " + le(16, 4) + le(1, 2) + le(1, 2) + le(8000, 4) + le(8000, 4) + le(1, 2) + le(8, 2) + "data" + le(n, 4) + "\x80".repeat(n);
+  return URL.createObjectURL(new Blob([Uint8Array.from(s, (c) => c.charCodeAt(0))], { type: "audio/wav" }));
+};
+// Cliente de una propuesta, según el formato de su resumen en el servidor (src/lib/voice.ts).
+function customerOf(action: string, payload: Record<string, unknown>, summary: string): string | undefined {
+  const parts = summary.split(" · ");
+  switch (action) {
+    case "customer": return String(payload.name ?? "") || undefined;
+    case "job": return /para (.+)$/.exec(summary)?.[1];
+    case "hours": return parts[2];
+    case "status": return parts[0].split(": ")[1];
+    case "stock-move": case "cost": case "payment": case "approveQuote": return parts[1];
+    default: return undefined;
+  }
+}
 const MAX_REC = 15; // segundos
 const mmss = (s: number) => `0:${String(Math.min(Math.floor(s), MAX_REC)).padStart(2, "0")}`;
 
@@ -120,6 +131,11 @@ const mmss = (s: number) => `0:${String(Math.min(Math.floor(s), MAX_REC)).padSta
 export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }: { close: () => void; admin?: boolean; jobs?: { label: string; customer: string }[]; confirm: (action: string, payload: unknown, meta: { text: string; summary: string }) => Promise<void> }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [log, setLog] = useState<Line[]>([]);
+  // La escucha continua llama a handle desde callbacks de grabaciones anteriores: el historial se lee de aquí, no de un «log» antiguo.
+  const logRef = useRef(log);
+  logRef.current = log;
+  const turn = useRef(0); // cada respuesta hablada tiene su turno; interrumpir (botón, nueva orden) invalida la anterior
+  const unsaid = useRef<Line | null>(null); // respuesta que aún no ha empezado a sonar
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [follow, setFollow] = useState<Chip[]>([]);
@@ -133,16 +149,23 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
   const alive = useRef(true);
   const stream = useRef<MediaStream | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
-  const stopRec = useRef<{ send: () => void; cancel: () => void } | null>(null);
+  const stopRec = useRef<{ send: () => void; cancel: (quiet?: boolean) => void } | null>(null);
   const flow = useRef<Flow | null>(null);
   const retry = useRef<{ text: string; options: string[] } | null>(null); // orden que espera saber qué cliente es
   const lastCustomer = useRef<string | undefined>(undefined);
   const [saved, setSaved] = useState<Line[]>([]);
-  useEffect(() => setSaved(loadChat()), []);
+  useEffect(() => {
+    setSaved(loadChat());
+    try {
+      // el cliente de la última orden sobrevive a cerrar el asistente: «apunta horas a Francisco» sigue siendo el mismo Francisco
+      const c = JSON.parse(localStorage.getItem(CHAT_KEY) ?? "null");
+      if (c && Date.now() - c.at < 7 * 864e5) lastCustomer.current = c.customer || undefined;
+    } catch {}
+  }, []);
   useEffect(() => {
     if (!log.length) return;
     try {
-      localStorage.setItem(CHAT_KEY, JSON.stringify({ at: Date.now(), log: log.slice(-30).map(({ who, text }) => ({ who, text })) }));
+      localStorage.setItem(CHAT_KEY, JSON.stringify({ at: Date.now(), customer: lastCustomer.current, log: log.slice(-30).map(({ who, text }) => ({ who, text })) }));
     } catch {}
   }, [log]);
   const player = useRef<HTMLAudioElement | null>(null); // un solo <audio>: iOS solo deja sonar el que se «desbloqueó» con un toque
@@ -159,7 +182,7 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
     unlocked.current = true;
     try {
       const a = (player.current ??= new Audio());
-      a.src = SILENT_WAV;
+      a.src = silentWav();
       a.play().then(() => a.pause()).catch(() => {});
     } catch {}
     try {
@@ -187,10 +210,12 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
   // Solo audio (sin añadir a la conversación): voz del servidor (Piper) o, si falla o se elige, la del navegador.
   // onStart: se llama cuando empieza a sonar (para mostrar el texto a la vez que la voz).
   const speak = (t: string, done: () => void, onStart?: () => void) => {
+    const id = turn.current;
+    const live = () => alive.current && id === turn.current;
     let started = false;
     const start = () => (started || ((started = true), onStart?.()));
     const fallback = () => {
-      if (!alive.current) return;
+      if (!live()) return;
       start();
       if (!("speechSynthesis" in window)) return done();
       const u = new SpeechSynthesisUtterance(t);
@@ -208,7 +233,7 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
       if (i >= jobs.length) return done();
       jobs[i]
         .then((b) => {
-          if (!alive.current) return;
+          if (!live()) return;
           const a = (player.current ??= new Audio());
           const url = URL.createObjectURL(b);
           audio.current = a;
@@ -222,16 +247,34 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
     play(0);
   };
   const say = (t: string, then?: () => void, list?: ListData) => {
+    const id = ++turn.current;
+    const line: Line = { who: "asistente", text: t, list };
+    unsaid.current = line;
     setPhase("thinking");
     speak(
       t,
       () => {
-        if (!alive.current) return;
+        if (!alive.current || id !== turn.current) return;
         setPhase("idle");
         then?.();
       },
-      () => (setLog((l) => [...l, { who: "asistente", text: t, list }]), setPhase("speaking")),
+      () => {
+        if (unsaid.current === line) (unsaid.current = null), setLog((l) => [...l, line]);
+        setPhase("speaking");
+      },
     );
+  };
+  // Corta lo que esté pasando (grabación o voz) sin perder el texto de la respuesta, para atender un toque.
+  const interrupt = () => {
+    turn.current++;
+    stopRec.current?.cancel(true);
+    audio.current?.pause();
+    try {
+      speechSynthesis.cancel();
+    } catch {}
+    const l = unsaid.current;
+    if (l) (unsaid.current = null), setLog((x) => [...x, l]);
+    setPhase("idle");
   };
   const choose = (p: Prefs) => {
     setPrefs(p);
@@ -273,7 +316,9 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
     };
     const askJob = () => {
       f.step = "job";
-      const chips = [...jobs.slice(0, 5).map((j) => C(j.label, j.customer)), C("El último trabajo", "__last")];
+      // Un botón por cliente: la orden va a su trabajo más reciente (la lista llega ordenada del más nuevo al más viejo).
+      const latest = jobs.filter((j, i) => jobs.findIndex((x) => x.customer === j.customer) === i);
+      const chips = [...latest.slice(0, 5).map((j) => C(j.label, j.customer)), C("El último trabajo", "__last")];
       askFlow("¿En qué trabajo?", chips, keep);
     };
     if (f.step === "range") {
@@ -300,11 +345,18 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
         { text: orig, options } = retry.current;
       const byName = options.filter((o) => plain(o).split(/\s+/).some((w) => w.length > 2 && n.includes(w)));
       const at = ORDINAL.find(([re]) => re.test(n))?.[1];
-      const choice = byName.length === 1 ? byName[0] : at !== undefined ? options[at] : undefined;
+      // «¿Te refieres a Federico?» → «sí» lo elige; «no» deja la orden y pide el nombre.
+      const choice = byName.length === 1 ? byName[0] : at !== undefined ? options[at] : options.length === 1 && YES.test(n) ? options[0] : undefined;
       if (choice) {
         setLog((l) => [...l, { who: "tú", text: said }]);
         setFollow([]);
         return handle(orig, keepListening, false, choice);
+      }
+      if (NO.test(n) && n.length < 20) {
+        retry.current = null;
+        setLog((l) => [...l, { who: "tú", text: said }]);
+        setFollow([]);
+        return say("Vale. Dime el nombre del cliente tal como lo tienes guardado, o créalo si es nuevo.", () => keepListening && alive.current && listen());
       }
       retry.current = null;
     }
@@ -341,18 +393,18 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
     }
     setPhase("thinking");
     try {
-      const r = await fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: said, pick, lastCustomer: lastCustomer.current, history: log.slice(-6).map((l) => ({ who: l.who, text: l.text })) }) });
+      const r = await fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: said, pick, lastCustomer: lastCustomer.current, history: logRef.current.slice(-6).map((l) => ({ who: l.who, text: l.text })) }) });
       const d: Reply = await r.json();
       retry.current = null;
       if (pick) lastCustomer.current = pick;
       if (d.ask) {
         retry.current = { text: said, options: d.ask.options };
         setFollow(d.ask.options.map((o) => C(o, o, { pick: o })));
-        return say(d.message ?? "¿Cuál?", next);
+        return say(d.message ?? "¿Cuál?", next, d.list); // la lista con datos de cada cliente, para reconocerlo
       }
       if (d.proposal) {
-        const c = /(?:para|·) ([^·]+?)(?: ·|$)/.exec(d.proposal.summary)?.[1];
-        if (pick || c) lastCustomer.current ??= pick ?? c;
+        // El cliente del que se está hablando ahora (antes se tomaba la fecha de «Horas … · 2026-11-12 · …»).
+        lastCustomer.current = pick ?? customerOf(d.proposal.action, d.proposal.payload, d.proposal.summary) ?? lastCustomer.current;
         pending.current = d.proposal;
         return say(`${d.proposal.summary}. ¿Lo guardo?`, next);
       }
@@ -386,7 +438,7 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
     const rec = new MediaRecorder(s, mime ? { mimeType: mime } : undefined);
     const chunks: Blob[] = [];
     rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    let heard = !vad, lastVoice = Date.now(), cancelled = false, floor = 0, samples = 0;
+    let heard = !vad, lastVoice = Date.now(), cancelled = false, silent = false, floor = 0, samples = 0;
     const t0 = Date.now();
     setLevels(Array(32).fill(0));
     setElapsed(0);
@@ -405,12 +457,14 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
       if ((vad && heard && now - lastVoice > 1200) || now - t0 > (heard ? MAX_REC * 1000 : 8000)) rec.stop();
     }, 100);
     const end = () => rec.state !== "inactive" && rec.stop();
-    stopRec.current = { send: end, cancel: () => ((cancelled = true), end()) };
+    const me = { send: end, cancel: (quiet = false) => ((cancelled = true), (silent = quiet), end()) };
+    stopRec.current = me;
     rec.onstop = async () => {
       clearInterval(tick);
       src.disconnect();
-      stopRec.current = null;
-      if (cancelled || !alive.current) return setPhase("idle");
+      if (stopRec.current === me) stopRec.current = null;
+      // quiet: lo cortó un toque que ya está atendiendo otra cosa; no se pisa su estado.
+      if (cancelled || !alive.current) return silent ? undefined : setPhase("idle");
       const type = rec.mimeType || mime || "audio/webm";
       const blob = new Blob(chunks, { type });
       if (!heard || blob.size < 1500) return setPhase("idle"); // nadie habló (o fue un toque): se queda esperando
@@ -478,6 +532,13 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
   const inputRef = useRef<HTMLInputElement>(null);
   const onChip = (c: Chip) => {
     unlock();
+    interrupt(); // los botones funcionan también mientras escucha o habla
+    if (flow.current && !c.flow) {
+      // Respuesta a una pregunta del asistente («¿En qué trabajo?»): se muestra el texto del botón, no su valor interno.
+      setLog((l) => [...l, { who: "tú", text: c.label }]);
+      setFollow([]);
+      return handleFlow(c.text, false);
+    }
     if (c.flow) {
       setLog((l) => [...l, { who: "tú", text: c.label }]);
       return startFlow(c.flow, c.customer, false);
@@ -504,7 +565,7 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
   const toggle = () => {
     if (phase === "listening") stopRec.current?.send();
     else if (phase === "idle") listen();
-    else if (phase === "speaking") (audio.current?.pause(), speechSynthesis.cancel(), setPhase("idle"));
+    else if (phase === "speaking") interrupt();
   };
 
   return (
@@ -550,7 +611,7 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
                   <small>«{saved[saved.length - 1].text.slice(0, 80)}»</small>
                   <div>
                     <Button onClick={() => (setLog(saved), setSaved([]))}>Reanudar</Button>
-                    <Button variant="outline" onClick={() => { setSaved([]); try { localStorage.removeItem(CHAT_KEY); } catch {} }}>Empezar de cero</Button>
+                    <Button variant="outline" onClick={() => { setSaved([]); lastCustomer.current = undefined; try { localStorage.removeItem(CHAT_KEY); } catch {} }}>Empezar de cero</Button>
                   </div>
                 </div>
               )}
@@ -573,7 +634,19 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
                           {it.href && <ChevronRight size={18} />}
                         </>
                       );
-                      return <li key={j}>{it.href ? <a href={it.href} onClick={close}>{inner}</a> : <div>{inner}</div>}</li>;
+                      // Fila de cliente para elegir: solo se puede tocar mientras esa pregunta sigue abierta.
+                      const pickable = it.pick && retry.current?.options.includes(it.pick);
+                      return (
+                        <li key={j}>
+                          {pickable ? (
+                            <button type="button" className="va-pick" onClick={() => onChip(C(it.label, it.pick!, { pick: it.pick }))}>{inner}<ChevronRight size={18} /></button>
+                          ) : it.href ? (
+                            <a href={it.href} onClick={close}>{inner}</a>
+                          ) : (
+                            <div>{inner}</div>
+                          )}
+                        </li>
+                      );
                     })}
                   </ul>
                 </div>
@@ -586,19 +659,21 @@ export default function VoiceDialog({ close, confirm, admin = true, jobs = [] }:
           {error && <p className="va-error" role="alert">{error}</p>}
           <div ref={endRef} />
         </div>
-        {pending.current && phase === "idle" && (
+        {/* En conversación por voz el asistente ya está escuchando el «sí»: los botones siguen ahí para quien prefiera tocar. */}
+        {pending.current && phase !== "thinking" && (
           <div className="va-confirm">
-            <Button onClick={() => handle("sí", false)}>Confirmar y guardar</Button>
-            <Button variant="outline" onClick={() => handle("no", false)}>Cancelar</Button>
+            <Button onClick={() => (interrupt(), handle("sí", false))}>Confirmar y guardar</Button>
+            <Button variant="outline" onClick={() => (interrupt(), handle("no", false))}>Cancelar</Button>
           </div>
         )}
-        {phase !== "listening" && phase !== "thinking" && !pending.current && !text && (() => {
-          const chips = (log.length ? (follow.length ? follow : []) : SUGGESTIONS).filter((c) => admin || !c.admin);
+        {phase !== "thinking" && !pending.current && !text && (() => {
+          // Siempre hay atajos (tras cancelar o un error también), salvo si se espera un dato a mano («¿De qué hora…?»).
+          const chips = (log.length ? (follow.length ? follow : flow.current ? [] : afterAnswer()) : SUGGESTIONS).filter((c) => admin || !c.admin);
           return chips.length ? (
             <div className="va-chips" role="list" aria-label="Sugerencias">
-              {log.length > 0 && <span className="va-chips-label"><Sparkles size={14} /> Siguiente</span>}
-              {chips.map((c) => (
-                <button key={c.label} type="button" role="listitem" onClick={() => onChip(c)}>{c.label}</button>
+              {log.length > 0 && <span className="va-chips-label"><Sparkles size={14} /> {chips.some((c) => c.pick) ? "Elige" : "Siguiente"}</span>}
+              {chips.map((c, i) => (
+                <button key={`${i}-${c.label}`} type="button" role="listitem" onClick={() => onChip(c)}>{c.label}</button>
               ))}
             </div>
           ) : null;

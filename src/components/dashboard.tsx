@@ -435,6 +435,14 @@ export function Dashboard({
     },
     { dedupingInterval: 10000 },
   );
+  // Catálogo de materiales (solo el responsable): sale después de lo que hay en el almacén.
+  const { data: catalogMatches, isLoading: catalogSearching } = useSWR<{ items: { id: string; reference: string; supplierRef: string; description: string; brand: string; unit: string; price: string; currentPrice: string | null }[] }>(
+    state?.user.role === "ADMIN" && searchTerm.length >= 2 && searchScope !== "company" ? `/api/search/catalog?limit=8&q=${encodeURIComponent(searchTerm)}` : null,
+    async (url: string) => {
+      const r = await fetch(url);
+      return r.ok ? r.json() : { items: [] };
+    },
+  );
   const { data: queue } = useSWR<
     { id: string; status: string; error?: string }[]
   >(
@@ -1084,13 +1092,6 @@ export function Dashboard({
                       {j.archivedAt ? <RefreshCw size={16} /> : <Trash2 size={16} />}
                     </button>
                   )}
-                  <Link
-                    prefetch={true}
-                    href={jobPath(j)}
-                    aria-label={`Abrir ${j.name}`}
-                  >
-                    <ChevronRight size={16} className="text-slate-400" />
-                  </Link>
                 </td>
               </tr>
             ))}
@@ -1895,7 +1896,8 @@ export function Dashboard({
                 const saleHits = s.sales.filter((x) => matches(x.number, x.description, x.jobName, x.date)).slice(0, 8);
                 const items = searchScope === "company" ? [] : productMatches?.items ?? [];
                 const company = searchScope !== "products";
-                const none = !items.length && !(company && (jobHits.length || customerHits.length || supplierHits.length || docHits.length || saleHits.length));
+                const catalogHits = searchScope === "company" ? [] : catalogMatches?.items ?? [];
+                const none = !items.length && !catalogHits.length && !(company && (jobHits.length || customerHits.length || supplierHits.length || docHits.length || saleHits.length));
                 const Section = ({ title, count, children }: { title: string; count: number; children: React.ReactNode }) =>
                   count ? (
                     <section className="sr-section">
@@ -1914,7 +1916,7 @@ export function Dashboard({
                       </select>
                       <button type="button" className="text-button" onClick={() => { setQuery(""); setSearchScope("all"); }}>Cerrar</button>
                     </div>
-                    {(productsSearching || documentsSearching) && <p className="small-note sr-note" role="status">Buscando…</p>}
+                    {(productsSearching || documentsSearching || catalogSearching) &&<p className="small-note sr-note" role="status">Buscando…</p>}
                     {(productSearchError || documentSearchError) && <p className="error sr-note" role="alert">No se pudo completar la búsqueda. Vuelve a intentarlo.</p>}
                     <Section title="Artículos" count={items.length}>
                       {items.map((p) => (
@@ -1923,6 +1925,15 @@ export function Dashboard({
                           {p.alias && <span>{p.description}</span>}
                           <small>{p.reference || p.code}{p.brand ? ` · ${p.brand}` : ""}</small>
                           <small>{p.onHand} {p.unit} en almacén{p.location ? ` · ${p.location}` : ""}</small>
+                        </Link>
+                      ))}
+                    </Section>
+                    <Section title="Catálogo" count={catalogHits.length}>
+                      {catalogHits.map((p) => (
+                        <Link className="sr-card" key={p.id} href={`/catalogo?q=${encodeURIComponent(p.reference || p.supplierRef || p.description)}`}>
+                          <strong>{p.description}</strong>
+                          <small>{[p.reference && `Ref. ${p.reference}`, p.supplierRef && `Prov. ${p.supplierRef}`, p.brand].filter(Boolean).join(" · ")}</small>
+                          <small>{Number(p.price) > 0 ? `${euro(p.price)} / ${p.unit} · tarifa` : Number(p.currentPrice) > 0 ? `${euro(p.currentPrice)} / ${p.unit} · Sonepar` : "Sin precio"}</small>
                         </Link>
                       ))}
                     </Section>
@@ -3056,6 +3067,7 @@ export function Dashboard({
       {material && (
         <MaterialPicker
           canEdit={isAdmin}
+          catalog={isAdmin}
           jobs={activeJobs}
           jobId={selected?.id}
           close={() => setMaterial(false)}

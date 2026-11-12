@@ -1,13 +1,13 @@
 "use client";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import useSWR from "swr";
-import { ChevronLeft, ChevronRight, Download, ExternalLink, FileUp, Plus, Search, Trash2, ZapOff } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { ChevronLeft, ChevronRight, ExternalLink, Plus, Search, Trash2, ZapOff } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "./confirm-dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { parseCatalogCsv, type CatalogRow } from "@/lib/catalog-csv";
-import { parseSoneparJson } from "@/lib/catalog-sonepar";
+import type { CatalogRow } from "@/lib/catalog-csv";
 import { soneparSearchUrl, variation } from "@/lib/catalog-links";
 
 const PAGE = 50;
@@ -98,49 +98,16 @@ export default function Catalog() {
     [del, setDel] = useState<{ id: string; description: string } | null>(null),
     [draft, setDraft] = useState<CatalogRow>({ reference: "", description: "", brand: "", unit: "ud", price: "" }),
     [busy, setBusy] = useState(false),
-    [message, setMessage] = useState(""),
-    [error, setError] = useState(""),
-    file = useRef<HTMLInputElement>(null);
+    [error, setError] = useState("");
+  const linked = useSearchParams().get("q"); // viene del buscador general
+  useEffect(() => {
+    if (linked) setQuery(linked);
+  }, [linked]);
   useEffect(() => {
     const t = setTimeout(() => { setTerm(query.trim()); setPage(1); }, 200);
     return () => clearTimeout(t);
   }, [query]);
   const { data, mutate, isLoading } = useSWR(`/api/search/catalog?pageSize=${PAGE}&page=${page}${noPrice ? "&filter=noprice" : ""}&q=${encodeURIComponent(term)}`, fetcher);
-  const importFile = async (f: File) => {
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      const text = await f.text();
-      // JSON de Sonepar («Ya comprado») o CSV de Excel.
-      const isJson = f.name.toLowerCase().endsWith(".json") || text.trimStart().startsWith("{");
-      const sonepar = isJson ? parseSoneparJson(text) : null;
-      const { items, errors } = sonepar
-        ? { items: sonepar.items, errors: [] as string[] }
-        : parseCatalogCsv(text);
-      if (!items.length) throw Error(errors[0] ?? "No se ha encontrado ningún artículo en el archivo.");
-      let created = 0,
-        updated = 0;
-      // Por lotes: cada petición tiene un tamaño máximo.
-      for (let i = 0; i < items.length; i += 500) {
-        const r = await op("catalog-import", { items: items.slice(i, i + 500) });
-        created += r.created;
-        updated += r.updated;
-      }
-      const note = sonepar
-        ? ` · ${sonepar.withoutPrice} sin precio visible (quedan a 0 € para completarlos)${sonepar.skipped ? ` · ${sonepar.skipped} omitidos (portes)` : ""}`
-        : errors.length
-          ? ` · ${errors.length} filas ignoradas (${errors[0]})`
-          : "";
-      setMessage(`${created} artículos nuevos, ${updated} actualizados${note}.`);
-      await mutate();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-      if (file.current) file.current.value = "";
-    }
-  };
   return (
     <>
       <div className="page-head">
@@ -150,21 +117,9 @@ export default function Catalog() {
           <p className="subtitle">Tu base de conocimiento: se elige al hacer un presupuesto, sin tocar el almacén.</p>
         </div>
         <div className="actions">
-          <Button variant="outline" loading={busy} onClick={() => file.current?.click()}>
-            <FileUp size={16} /> Importar CSV o Sonepar
-          </Button>
-          <a className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50" href="/api/search/catalog/export">
-            <Download size={16} /> Descargar CSV
-          </a>
           <Button onClick={() => setAdding(true)}><Plus size={16} /> Añadir artículo</Button>
-          <input ref={file} type="file" accept=".csv,.json,text/csv,text/plain,application/json" hidden onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
         </div>
       </div>
-      <p className="small-note mb-4">
-        CSV exportado de Excel con cabecera: <b>referencia, descripción, marca, unidad, precio</b> (solo descripción y precio son obligatorias).
-        Si importas un artículo que ya existe, se actualiza su precio. También acepta el JSON «Ya comprado» de Sonepar.
-      </p>
-      {message && <div className="inventory-notice" role="status">{message}</div>}
       {error && <p className="error" role="alert">{error}</p>}
       <label className="person-search" style={{ maxWidth: 520, marginBottom: 16 }}>
         {isLoading ? <Spinner /> : <Search size={16} />}

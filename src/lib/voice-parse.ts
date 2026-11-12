@@ -20,7 +20,8 @@ const NUM: Record<string, number> = {
 const plain = (t: string) => [...t].map((c) => c.normalize("NFD")[0].toLowerCase()).join("");
 const words = (n: string) =>
   n.replace(/\bla una\b/g, "la 1").replace(/\b[a-z]+\b/g, (w) => (w in NUM ? String(NUM[w]) : w));
-const cap = (s: string) => s.trim().replace(/[,.;]+$/, "").replace(/^./, (c) => c.toUpperCase());
+// Quita cortesías y signos finales («Lucía, por favor?» → «Lucía») y pone la primera en mayúscula.
+const cap = (s: string) => s.trim().replace(/[\s,.;?!¿¡]*(?:\bpor favor|\bgracias)?[\s,.;?!¿¡]*$/i, "").replace(/^./, (c) => c.toUpperCase());
 
 const T = String.raw`(\d{1,2})(?:[:.h]\s?(\d{2}))?(?:\s+(y media|y cuarto|menos cuarto|y \d{1,2}))?`;
 const HOURS = new RegExp(String.raw`\b(?:de|desde)\s+(?:las?\s+)?${T}\s+(?:a|hasta)\s+(?:las?\s+)?${T}\b`);
@@ -71,6 +72,35 @@ function knownCustomer(text: string, n: string, known: string[]) {
 }
 const ARTICLE = /^(?:la|el|los|las|lo|un|una|unos|unas)\s+/;
 
+// Cómo «suena» un nombre en español: lo que el dictado confunde (h muda, b/v, ll/y, c/z/s, qu/k, letras dobles).
+const sound = (s: string) =>
+  plain(s).replace(/[^a-z0-9]+/g, " ").replace(/h/g, "").replace(/v/g, "b").replace(/ll/g, "y").replace(/c([ei])/g, "s$1").replace(/z/g, "s").replace(/qu/g, "k").replace(/c/g, "k").replace(/(.)\1+/g, "$1").trim();
+const ratio = (a: string, b: string) => {
+  if (!a || !b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return 1 - prev[b.length] / Math.max(a.length, b.length);
+};
+/** Clientes que se parecen a lo dicho aunque esté mal pronunciado o transcrito («Federica» → Federico, «Maricarmen» → Mari Carmen). */
+export function similarNames(q: string, names: string[], max = 5) {
+  const qs = sound(q).split(" ").filter(Boolean);
+  if (!qs.length) return [];
+  const score = (name: string) => {
+    const ns = sound(name).split(" ").filter(Boolean);
+    const whole = ratio(qs.join(""), ns.join(""));
+    // Cada palabra dicha contra la palabra más parecida del nombre; «Rodolf» es el principio de «Rodolfo».
+    const words = qs.reduce((a, w) => a + Math.max(0, ...ns.map((n) => (w.length >= 3 && (n.startsWith(w) || w.startsWith(n)) ? 0.9 : ratio(w, n)))), 0) / qs.length;
+    return Math.max(whole, words);
+  };
+  const ranked = [...new Set(names)].map((n) => [n, score(n)] as const).filter(([, s]) => s >= 0.7).sort((a, b) => b[1] - a[1]);
+  // Solo los que están casi tan cerca como el mejor: «Prueba Bot Sarah» → Sara, no también Marta por compartir «Prueba Bot».
+  return ranked.filter(([, s]) => s >= ranked[0][1] - 0.1).slice(0, max).map(([n]) => n);
+}
+
 export function parseCommand(text: string, known: string[] = []): Intent | null {
   const n = plain(text),
     nd = words(n);
@@ -93,6 +123,8 @@ export function parseCommand(text: string, known: string[] = []): Intent | null 
       const name = cap(text.slice(off, off + m.index).replace(/^\s*(?:de|que se llame|que se llama|llamado)\s+/i, "")) || "Trabajo";
       if (customer) return { action: "job", customer, name };
     }
+    // «crea un trabajo» sin cliente: el servidor pregunta para quién es (nunca lo inventa).
+    if (!/\b(?:para|al|a la|cliente)\b/.test(rest)) return { action: "job", customer: "", name: cap(text.slice(off).replace(/^\s*(?:de|que se llame|que se llama|llamado)\s+/i, "")) || "Trabajo" };
   }
   // Estado de un trabajo: «marca como finalizado el último trabajo de Rodolfo», «reabre el último trabajo»
   const done = /\b(?:marca|marcar|pon|poner|deja|dejar|cierra|cerrar|da|dar|termina|terminar|finaliza|finalizar)\w*\b.*\b(?:finalizad\w*|terminad\w*|acabad\w*|cerrad\w*|finalizar|terminar)\b/.test(n);
@@ -113,7 +145,8 @@ export function parseCommand(text: string, known: string[] = []): Intent | null 
     [/\b(?:poco|bajo|sin)\s+(?:stock|material|existencias)\b|\b(?:stock|material|existencias)\s+(?:bajo|minimo)\b|\bse (?:esta )?acaba/, "lowstock"],
     [/\btrabajos\b/, "jobs"],
   ];
-  if (/\b(?:list|saca|muestr|ensen|dame|dime|ver|cuales|cuantos|cuantas|que|todos|todas)\w*\b/.test(n) && !/\b(?:crea|crear|nuevo|nueva|abre|anade|agrega)\b/.test(n)) {
+  if (/\b(?:list|saca|muestr|ensen|dame|dime|ver|cuales|cuantos|cuantas|que|todos|todas)\w*\b/.test(n) && !/\b(?:crea|crear|nuevo|nueva|abre|anade|agrega|borr\w*|elimin\w*|quita\w*)\b/.test(n) && !/\bpendientes? de presupuesto\b/.test(n)) {
+    // («trabajos pendientes de presupuesto» es un estado de trabajo, no la lista de presupuestos: lo resuelve la consulta abierta)
     const hit = LISTS.find(([re]) => re.test(n));
     if (hit) {
       let name = "";
@@ -121,6 +154,12 @@ export function parseCommand(text: string, known: string[] = []): Intent | null 
         const at = n.search(/trabajos/) + 8;
         const m = /^\s*(?:de|del|para)\s+(?:el\s+|la\s+)?(?:cliente\s+)?(.+?)\s*[?!.]*$/d.exec(n.slice(at));
         if (m) name = cap(text.slice(at + m.indices![1][0], at + m.indices![1][1]));
+      }
+      // «cuántos trabajos tiene Federico», «facturas pendientes de Rodolfo»: sin filtrar se listaría lo de todos los clientes.
+      if (!name && ["jobs", "unpaid", "quotes"].includes(hit[1])) name = knownCustomer(text, n, known) ?? "";
+      if (!name && hit[1] === "jobs") {
+        const t = /\btrabajos\s+(?:abiertos\s+)?(?:tiene|lleva|hay (?:de|con|para))\s+(?:el\s+|la\s+)?(?:cliente\s+)?(.+?)\s*[?!.]*$/d.exec(n);
+        if (t) name = cap(text.slice(t.indices![1][0], t.indices![1][1]));
       }
       return { action: "query", entity: hit[1], ...(name ? { name } : {}) };
     }
@@ -145,7 +184,7 @@ export function parseCommand(text: string, known: string[] = []): Intent | null 
     const phone = /(?:telefono|movil|numero|tlf)\s+(?:es\s+|el\s+|del\s+)?((?:\+?\d[\s.-]?){9,13})/.exec(words(rest))?.[1].replace(/[\s.-]/g, "");
     const raw = text.slice(a, b).replace(/^(?:se llama|se llame)\s+/i, "");
     const name = cap(raw.replace(/\s+(?:con|que|y|su|cuyo|telefono|movil|numero)\b.*$/i, ""));
-    if (name) return { action: "contact", kind, name, ...(phone ? { phone } : {}) };
+    if (name && !/^(?:y|e|o)\s/i.test(name)) return { action: "contact", kind, name, ...(phone ? { phone } : {}) };
   }
   const range = spokenRange(text);
   if (range) {
@@ -156,7 +195,8 @@ export function parseCommand(text: string, known: string[] = []): Intent | null 
     customer ??= knownCustomer(text, n, known);
     // Sin la palabra «cliente»: «… con Juan», «… para María José».
     if (!customer) {
-      const w = /\b(?:con|para)\s+(?:el\s+|la\s+)?(?!ultimo\b|trabajo\b)(.+?)(?=\s+(?:en|que|ayer|hoy|el ultimo)\b|$)/.exec(n);
+      // «a/al Francisco» también, pero no la «a» del horario («de 8 a 3», «a las tres»).
+      const w = /\b(?:con|para|al|a)\s+(?:el\s+|la\s+)?(?!ultimo\b|trabajo\b|las?\b|\d|(?:una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\b)(.+?)(?=\s+(?:en|que|ayer|hoy|el ultimo|el (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b|$)/.exec(n);
       if (w) customer = cap(text.slice(w.index + w[0].length - w[1].length, w.index + w[0].length));
     }
     let jobRef: string | undefined;
@@ -183,11 +223,12 @@ export function parseCommand(text: string, known: string[] = []): Intent | null 
     const rest = mat[3] ?? "";
     const c = /\b(?:de|del)\s+(?:la\s+)?(?:cliente\s+)?(.+?)\s*$/.exec(rest);
     const customer = c ? cap(text.slice(mat.index + mat[0].length - rest.length + c.index + c[0].length - c[1].length, mat.index + mat[0].length)) : knownCustomer(text, n, known);
-    if (item.trim()) return { action: "material", item: cap(item), quantity: q || 1, customer, job: mat[2] || !customer ? "last" : undefined };
+    if (item.trim() && !/^horas?\b/i.test(item.trim())) return { action: "material", item: cap(item), quantity: q || 1, customer, job: mat[2] || !customer ? "last" : undefined };
   }
   // Gasto: «apunta un gasto de gasolina de 40 euros»
-  const amount = /(\d+(?:[.,]\d{1,2})?)\s*(?:euros?|€|eur)\b/.exec(nd);
-  if (amount && /\b(?:gasto|gastos|ticket|gasolina|factura de)\b/.test(n)) {
+  const amount = /(\d+(?:[.,]\d{1,2})?)\s*(?:euros?\b|€|eur\b)/.exec(nd);
+  // «he cobrado 300 euros de la factura de Ana» es un cobro, no un gasto: se deja al modelo.
+  if (amount && /\b(?:gasto|gastos|ticket|gasolina|factura de)\b/.test(n) && !/\b(?:cobr|pag[oa]|ingres|me (?:han|ha) dado)\w*/.test(n)) {
     const cat = CATEGORY.find(([re]) => re.test(n))?.[1];
     return { action: "expense", category: cat, amount: Number(amount[1].replace(",", ".")), date: spokenDate(text) };
   }

@@ -3,12 +3,12 @@ import { AppError, type Actor } from "@/lib/access";
 import { matchesSearch } from "@/lib/product-search";
 import { dec } from "@/lib/money";
 
-import { parseCommand, type Intent } from "@/lib/voice-parse";
+import { parseCommand, similarNames, type Intent } from "@/lib/voice-parse";
 import { jobPath } from "@/lib/job-path";
 import { validateSql } from "@/lib/ai-sql";
 
 export type Proposal = { text: string; summary: string; action: string; payload: Record<string, unknown> };
-export type ListItem = { label: string; detail?: string; href?: string };
+export type ListItem = { label: string; detail?: string; href?: string; pick?: string }; // pick: tocarla elige ese cliente
 export type Reply = { transcript: string; proposal?: Proposal; message?: string; list?: { title: string; items: ListItem[] }; ask?: { options: string[] } };
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -96,7 +96,7 @@ function validIntent(o: Record<string, unknown>) {
 // Esquema que ve el modelo (solo nombres de tablas y columnas; nunca datos de la empresa).
 const AI_SCHEMA = `PostgreSQL. Solo puedes consultar estas vistas (todo en minúsculas, ya filtradas por empresa y permisos):
 ai.customers(id, name, tax_id, phone, email, address, hourly_rate)
-ai.jobs(id, number, name, customer, status, service, address, worker, planned_at, opened_at, finished_at, archived)  -- status: 'Pendiente','En proceso','Finalizado','Facturado','Cobrado'
+ai.jobs(id, number, name, customer, status, service, address, worker, planned_at, opened_at, finished_at, archived)  -- status: 'Pendiente de presupuesto' (recién creado),'Pendiente','En proceso','Finalizado','Facturado','Cobrado'
 ai.sales(id, number, customer, job, date, due_at, net, tax, withholding, collected, total, pending)  -- facturas de venta; pending = lo que falta por cobrar
 ai.quotes(id, number, name, customer, job, date, net, tax, total, approved)  -- presupuestos
 ai.stock(id, name, reference, brand, unit, on_hand, minimum, location)  -- almacén; poco stock: on_hand <= minimum AND minimum > 0
@@ -104,6 +104,7 @@ ai.hours(date, worker, customer, job, hours, billable, activity, hourly_cost)  -
 ai.suppliers(id, name, phone, email, contact)
 ai.expenses(id, date, description, amount, tax, category)  -- gastos generales
 ai.catalog(id, reference, description, brand, unit, price, supplier)  -- catálogo de materiales
+En ai.jobs, ai.sales, ai.quotes y ai.hours las columnas customer, job y worker son el NOMBRE (texto); para unir con ai.customers: ai.customers.name = ai.sales.customer.
 Reglas: una sola sentencia SELECT (admite WITH, JOIN, GROUP BY, ORDER BY), sin punto y coma, sin comillas dobles, solo esas vistas y funciones de agregación/fecha habituales. Nombres de personas o cosas: ILIKE '%texto%'. Fechas: CURRENT_DATE, date_trunc('month', CURRENT_DATE). Importes en euros.`;
 
 type Row = Record<string, unknown>;
@@ -148,13 +149,20 @@ async function chat(u: Actor, text: string, history: Turn[]): Promise<Reply | nu
     '- say: frase corta en español para decir en voz alta; puede llevar {n} (número de filas) y {columna} (valor de esa columna en la primera fila). Ejemplo: "Te deben {total} euros en {n} facturas".',
     "- none: frase si no hay resultados. title: título de la lista. label: columna que da nombre a cada fila de la lista. detail: columnas con más datos (máx. 3).",
     '- Si la pregunta no se puede contestar con esas vistas, o pide crear o cambiar algo, devuelve {"say": "..."} sin "sql" explicando brevemente qué puedes hacer o cómo pedirlo (ejemplo: «créame al cliente Francisco»).',
-    "Da nombres claros a las columnas (AS) y limita a lo necesario.",
+    "Da nombres claros a las columnas (AS) y limita a lo necesario. Cada {columna} de say debe ser EXACTAMENTE uno de esos alias.",
+    "No añadas filtros (fechas, estados) que la pregunta no pida: «cuánto me debe X» es todo lo pendiente, no solo este mes.",
+    "Contesta solo a la «Pregunta actual», y solo lo que pide: «¿y su teléfono?» es el teléfono, no la deuda.",
   ].join("\n");
-  // Solo las preguntas anteriores del usuario (nunca las respuestas, que llevan datos) para entender «¿y de Rodolfo?».
+  // Solo las preguntas anteriores del usuario (nunca las respuestas, que llevan datos) y como nota de contexto, no como
+  // preguntas: enviadas como mensajes sueltos, el modelo arrastraba sus filtros («facturado este mes» salía solo de Rodolfo)
+  // o contestaba la anterior («¿y su teléfono?» repetía la deuda).
+  const before = history.filter((h) => h.who === "tú").slice(-3).map((h) => `- ${String(h.text).slice(0, 300)}`);
   const messages: { role: string; content: string }[] = [
     { role: "system", content: system },
-    ...history.filter((h) => h.who === "tú").slice(-3).map((h) => ({ role: "user", content: String(h.text).slice(0, 300) })),
-    { role: "user", content: text.slice(0, 500) },
+    {
+      role: "user",
+      content: (before.length ? `Preguntas anteriores (úsalas SOLO si la actual se refiere a ellas con «su», «él», «y de…», «ese»; si no, ignóralas y no copies sus filtros):\n${before.join("\n")}\n\nPregunta actual: ` : "") + text.slice(0, 500),
+    },
   ];
   let executed = "";
   try {
@@ -174,6 +182,11 @@ async function chat(u: Actor, text: string, history: Turn[]): Promise<Reply | nu
       trace.ok = true;
       if (typeof o.sql !== "string" || !o.sql.trim()) {
         if (typeof o.say !== "string" || !o.say.trim()) return null;
+        // Una frase con {huecos} y sin consulta diría «{total}» en voz alta: se le pide la consulta.
+        if (/\{\w+\}/.test(o.say)) {
+          messages.push({ role: "assistant", content }, { role: "user", content: 'Tu "say" tiene {huecos} pero no hay "sql". Devuelve la consulta SELECT que da esos datos, o un "say" sin huecos.' });
+          continue;
+        }
         await recordVoice(u, { kind: "OPENAI", transcript: text, result: `Chat: ${o.say}`, ...trace, ms: Date.now() - t0 });
         return { transcript: text, message: o.say.slice(0, 500) };
       }
@@ -181,6 +194,8 @@ async function chat(u: Actor, text: string, history: Turn[]): Promise<Reply | nu
       let rows: Row[] | null = null;
       let problem = "";
       if (!v.ok) problem = v.error;
+      // En las vistas, customer/job/worker son nombres: unirlos con un id siempre da 0 filas («no hay ventas» cuando sí las hay).
+      else if (/\.id\s*=\s*\w+\.(?:customer|job|worker)\b|\b(?:customer|job|worker)\s*=\s*\w+\.id\b/i.test(v.sql)) problem = "customer, job y worker son nombres, no ids: une por nombre (p. ej. ai.customers.name = ai.sales.customer).";
       else {
         executed = v.sql;
         try {
@@ -195,12 +210,21 @@ async function chat(u: Actor, text: string, history: Turn[]): Promise<Reply | nu
         continue;
       }
       await recordVoice(u, { kind: "OPENAI", transcript: text, result: `SQL: ${executed} → ${rows.length} filas`, ...trace, ms: Date.now() - t0 });
-      if (!rows.length) return { transcript: text, message: String(o.none || "No he encontrado nada.").slice(0, 300) };
       const first = rows[0];
-      const say = String(o.say || "Esto es lo que he encontrado.")
-        .replace(/\{(\w+)\}/g, (_m, k: string) => (k === "n" ? String(rows!.length) : fmtCell(first[k])))
-        .slice(0, 300);
+      // Un SUM/COUNT sin filas que sumar devuelve una fila de nulos: es «no hay nada», no «te debe  euros».
+      if (!rows.length || (rows.length === 1 && Object.values(first).every((x) => x === null || x === undefined || Number(x) === 0))) return { transcript: text, message: String(o.none || "No he encontrado nada.").slice(0, 300) };
       const cols = Object.keys(first);
+      let hole = false;
+      const cell = (k: string) => {
+        const c = k in first ? k : cols.find((x) => x.toLowerCase() === k.toLowerCase()) ?? (cols.length === 1 ? cols[0] : undefined);
+        const v = c ? fmtCell(first[c]) : "";
+        if (!v) hole = true;
+        return v;
+      };
+      let say = String(o.say || "Esto es lo que he encontrado.").replace(/\{(\w+)\}/g, (_m, k: string) => (k === "n" && !cols.includes("n") ? String(rows!.length) : cell(k)));
+      // Si el modelo usó un nombre de columna que no existe, se lee el dato tal cual en vez de dejar un hueco.
+      if (hole) say = rows.length === 1 ? cols.map((c) => `${c.replace(/_/g, " ")}: ${fmtCell(first[c]) || "sin dato"}`).join(", ") + "." : `He encontrado ${rows.length} resultados.`;
+      say = say.slice(0, 300);
       const label = typeof o.label === "string" && cols.includes(o.label) ? o.label : cols[0];
       const detail: string[] = (Array.isArray(o.detail) ? o.detail : []).filter((c: unknown): c is string => typeof c === "string" && cols.includes(c) && c !== label).slice(0, 3);
       const showList = rows.length > 1 || detail.length > 0;
@@ -292,15 +316,50 @@ export async function interpret(u: Actor, transcript: string, history: Turn[] = 
   return r;
 }
 
-// Cliente dicho en voz → uno solo (nombre exacto), varios que encajan (hay que preguntar) o ninguno.
-function pickCustomer(q: string, names: string[]): { name?: string; options?: string[] } {
+// Cliente dicho en voz → uno solo (nombre exacto), varios que encajan, parecidos (mal dicho o mal transcrito) o ninguno.
+// `last`: el cliente con el que se acaba de trabajar en el chat; si encaja con lo dicho, es ese y no se pregunta.
+function pickCustomer(q: string, names: string[], last?: string): { name?: string; options?: string[]; similar?: boolean } {
   const k = plainText(q),
     exact = [...new Set(names.filter((x) => plainText(x) === k))];
   if (exact.length === 1) return { name: exact[0] };
   const hits = [...new Set(names.filter((x) => matchesSearch(q, [x])))];
   if (hits.length === 1) return { name: hits[0] };
-  return hits.length ? { options: hits.slice(0, 6) } : {};
+  if (last && hits.includes(last)) return { name: last };
+  if (hits.length) return { options: hits.slice(0, 6) };
+  const like = similarNames(q, names); // aunque solo haya uno parecido, se pregunta: nunca se cambia el cliente sin decirlo
+  return like.length ? { options: like, similar: true } : {};
 }
+
+/**
+ * Cliente dudoso: se dice una frase corta y se enseña la lista con lo que ayuda a reconocerlo (teléfono, dirección,
+ * trabajos abiertos y el último). Cada fila se puede tocar o decir («el segundo», «Federico»); la orden sigue sola.
+ */
+async function clarify(u: Actor, transcript: string, said: string, options: string[], similar = false, question?: string): Promise<Reply> {
+  const rows = await db.customer.findMany({
+    where: { companyId: u.companyId, name: { in: options } },
+    select: { name: true, phone: true, address: true, _count: { select: { jobs: { where: { archivedAt: null } } } }, jobs: { where: { archivedAt: null }, orderBy: { openedAt: "desc" }, take: 1, select: { name: true } } },
+  });
+  const by = new Map(rows.map((r) => [r.name, r]));
+  const admin = u.role === "ADMIN"; // el técnico no ve teléfonos ni direcciones de otros clientes
+  const items = options.map((name) => {
+    const r = by.get(name);
+    const jobs = r?._count.jobs ?? 0;
+    return {
+      label: name,
+      detail: [admin && r?.phone, admin && r?.address, jobs ? `${jobs} ${jobs === 1 ? "trabajo abierto" : "trabajos abiertos"}` : "sin trabajos abiertos", r?.jobs[0] && `último: ${r.jobs[0].name}`].filter(Boolean).join(" · "),
+      pick: name,
+    };
+  });
+  const message =
+    question ??
+    (similar
+      ? options.length === 1
+        ? `No tengo a «${said}». ¿Te refieres a ${options[0]}?`
+        : `No tengo a «${said}», pero se parecen ${options.length}. Dime cuál o tócalo en la lista.`
+      : `Hay ${options.length} clientes que encajan con «${said}». Dime cuál o tócalo en la lista.`);
+  return { transcript, message, list: { title: similar ? `Clientes parecidos a «${said}»` : question ? "Clientes" : `Clientes con «${said}»`, items }, ask: { options } };
+}
+const notFound = (transcript: string, said: string): Reply => ({ transcript, message: `No tengo ningún cliente parecido a «${said}». Si es nuevo, dime «créame al cliente ${said}».` });
 
 async function interpretOrder(u: Actor, transcript: string, history: Turn[], extra: Extra = {}): Promise<Reply> {
   const [custs, openJobs] = await Promise.all([
@@ -326,17 +385,29 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[], ext
   const companyId = u.companyId;
 
   // Cliente: el elegido en pantalla manda; si el nombre encaja con varios se pregunta y si no se dijo, se usa el último del chat.
+  // Al buscar o listar, el cliente elegido en la lista sustituye a lo que se dijo.
+  if (extra.pick && (intent.action === "find" || intent.action === "query")) intent.name = extra.pick;
+  // «busca a Francisco» / «trabajos de Francisco» justo después de trabajar con Francisco Pérez: es ese, no todos los Franciscos.
+  else if (extra.lastCustomer && ((intent.action === "find" && intent.kind !== "supplier") || (intent.action === "query" && !["customers", "suppliers", "stock", "lowstock"].includes(intent.entity))) && intent.name) {
+    const said = intent.name,
+      hits = names.filter((x) => matchesSearch(said, [x]));
+    if (hits.length > 1 && hits.includes(extra.lastCustomer)) intent.name = extra.lastCustomer;
+  }
   const withCustomer = intent as { customer?: string };
   if (!["query", "find", "contact", "overhead"].includes(intent.action) && ("customer" in intent || (intent.action as string) === "job")) {
     if (extra.pick) withCustomer.customer = extra.pick;
+    else if (!withCustomer.customer && extra.lastCustomer && names.includes(extra.lastCustomer)) withCustomer.customer = extra.lastCustomer; // «y apúntale material» sigue con el mismo cliente
     else if (!withCustomer.customer && (intent.action as string) === "job") {
-      if (extra.lastCustomer) withCustomer.customer = extra.lastCustomer;
-      else return { transcript, message: "¿Para qué cliente es el trabajo?", ask: { options: names.slice(0, 6) } };
+      // Primero los clientes con los que se ha trabajado hace poco; luego el resto por orden alfabético.
+      const recent = [...new Set([...openJobs.map((j) => j.customer.name), ...names])].slice(0, 6);
+      return clarify(u, transcript, "", recent, false, "¿Para qué cliente es el trabajo? Te enseño los últimos; dime cuál o tócalo.");
     }
     if (withCustomer.customer) {
-      const hit = pickCustomer(withCustomer.customer, names);
-      if (hit.options) return { transcript, message: `Hay ${hit.options.length} clientes que encajan con «${withCustomer.customer}»: ${hit.options.join(", ")}. ¿Cuál es?`, ask: { options: hit.options } };
-      if (hit.name) withCustomer.customer = hit.name;
+      const said = withCustomer.customer;
+      const hit = pickCustomer(said, names, extra.lastCustomer);
+      if (hit.options) return clarify(u, transcript, said, hit.options, hit.similar);
+      if (!hit.name) return notFound(transcript, said);
+      withCustomer.customer = hit.name;
     }
   }
 
@@ -350,7 +421,7 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[], ext
       take: 300,
     });
     const pool = intent.customer ? jobs.filter((j) => matchesSearch(intent.customer!, [j.customer.name])) : jobs;
-    if (!pool.length) return { transcript, message: intent.customer ? `No encuentro al cliente «${intent.customer}» con trabajos.` : "No hay trabajos." };
+    if (!pool.length) return { transcript, message: intent.customer ? `${intent.customer} no tiene trabajos abiertos${u.role !== "ADMIN" ? " asignados a ti" : ""}. Si quieres, dime «crea un trabajo para ${intent.customer}».` : "No hay trabajos." };
     let job = pool[0]; // «último trabajo» o, sin dato, el más reciente
     if (intent.job && intent.job !== "last") {
       const hit = pool.find((j) => matchesSearch(intent.job!, [j.name, j.number]));
@@ -367,7 +438,25 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[], ext
     if (intent.action === "material") {
       const lots = await db.stockLot.findMany({ where: { companyId, archivedAt: null, onHand: { gt: 0 } }, select: { id: true, alias: true, description: true, reference: true, brand: true, model: true, code: true, onHand: true, unit: true } });
       const hits = lots.filter((l) => matchesSearch(intent.item, [l.alias, l.description, l.reference, l.brand, l.model, l.code])).sort((a, b) => Number(b.onHand) - Number(a.onHand));
-      if (!hits.length) return { transcript, message: `No tengo «${intent.item}» en el inventario con existencias.` };
+      if (!hits.length) {
+        // Primero el almacén; si no está, el catálogo (solo el responsable): se apunta como coste de materiales a precio de tarifa.
+        const cat = u.role === "ADMIN" ? (await db.catalogItem.findMany({ where: { companyId }, orderBy: { description: "asc" } })).filter((c) => matchesSearch(intent.item, [c.reference, c.supplierRef, c.description, c.brand])) : [];
+        const unitPrice = (x: (typeof cat)[number]) => (Number(x.price) > 0 ? Number(x.price) : Number(x.currentPrice ?? 0)); // tarifa o, si no hay, precio actual de Sonepar
+        const c = cat.find((x) => unitPrice(x) > 0) ?? cat[0];
+        if (!c) return { transcript, message: `No tengo «${intent.item}» en el almacén${u.role === "ADMIN" ? " ni en el catálogo" : " con existencias"}.` };
+        if (!(unitPrice(c) > 0)) return { transcript, message: `«${c.description}» está en el catálogo pero sin precio. Ponle precio en el catálogo o añádelo desde el trabajo.` };
+        const amount = (intent.quantity * unitPrice(c)).toFixed(2);
+        const text = `${intent.quantity} ${c.unit} × ${c.description}${c.reference ? ` (Ref. ${c.reference})` : ""}`.slice(0, 200);
+        return {
+          transcript,
+          proposal: {
+            text: transcript,
+            action: "cost",
+            summary: `Material del catálogo (no está en el almacén): ${intent.quantity} × ${c.description}, ${amount.replace(".", ",")} € ·${job.customer.name} · ${job.number} ${job.name}${cat.length > 1 ? ` (hay ${cat.length} artículos parecidos)` : ""}`,
+            payload: { jobId: job.id, type: "Materiales", description: text, amount, requestKey: crypto.randomUUID() },
+          },
+        };
+      }
       const lot = hits[0];
       if (Number(lot.onHand) < intent.quantity) return { transcript, message: `Solo quedan ${lot.onHand} de «${lot.alias || lot.description}».` };
       return {
@@ -417,6 +506,11 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[], ext
   if (u.role !== "ADMIN") return { transcript, message: "Solo el responsable puede consultar o crear clientes, proveedores o trabajos." };
   if (intent.action === "query") {
     const q = intent.name?.trim() ?? "";
+    // «trabajos de Federica»: si el nombre no es de ningún cliente, se enseñan los parecidos en vez de «no hay trabajos».
+    if (q && ["jobs", "unpaid", "quotes"].includes(intent.entity) && !names.some((x) => matchesSearch(q, [x]))) {
+      const pc = pickCustomer(q, names);
+      if (pc.options) return clarify(u, transcript, q, pc.options, pc.similar);
+    }
     // Respuesta tipo lista: se dice una frase corta y el listado se enseña en pantalla.
     const show = (title: string, items: ListItem[], spoken: string, none: string): Reply =>
       items.length ? { transcript, message: spoken, list: { title, items: items.slice(0, 50) } } : { transcript, message: none };
@@ -501,7 +595,13 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[], ext
       const rows = await db.supplier.findMany({ where: { companyId } });
       for (const x of rows) if (matchesSearch(intent.name, [x.name])) hits.push({ label: "proveedor", name: x.name, phone: x.phone, email: x.email, address: "", extra: x.contact ? `contacto: ${x.contact}` : "" });
     }
-    if (!hits.length) return { transcript, message: `No encuentro a «${intent.name}».` };
+    // Varios clientes (o ninguno, pero parecidos): lista para elegir; al elegir se repite la búsqueda con ese nombre.
+    const custHits = hits.filter((h) => h.label === "cliente").map((h) => h.name);
+    if (intent.kind !== "supplier" && (custHits.length > 1 || !hits.length)) {
+      const pc = pickCustomer(intent.name, names);
+      if (pc.options) return clarify(u, transcript, intent.name, pc.options, pc.similar);
+    }
+    if (!hits.length) return intent.kind === "customer" ? notFound(transcript, intent.name) : { transcript, message: `No encuentro a «${intent.name}».` };
     if (hits.length > 1) return { transcript, message: `Hay ${hits.length} que encajan: ${hits.slice(0, 5).map((h) => `${h.name} (${h.label})`).join(", ")}. Dime el nombre completo.` };
     const h = hits[0];
     return { transcript, message: [`${h.name}, ${h.label}`, h.phone && `teléfono ${h.phone}`, h.email, h.address, h.extra].filter(Boolean).join(" · ") + "." };
