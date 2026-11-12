@@ -1,0 +1,9 @@
+[Unit]
+Description=Extracción semanal de precios Sonepar
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/javier/Almacen/conta-jesus
+UMask=0077
+TimeoutStartSec=2h
+ExecStart=/bin/bash /home/javier/Almacen/conta-jesus/scripts/sonepar-weekly.sh
