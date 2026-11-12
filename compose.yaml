@@ -70,7 +70,10 @@ services:
       DATABASE_URL: postgresql://instala:${POSTGRES_PASSWORD}@db:5432/instala
       SONEPAR_COMPANY_ID: ${SONEPAR_COMPANY_ID:-}
       SONEPAR_EXCHANGE_DIR: /app/data/sonepar
-    volumes: ["./data/automation/sonepar:/app/data/sonepar"]
+      DOCUMENT_DIR: /app/data/documents
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Configura BETTER_AUTH_SECRET en .env}
+    volumes: ["./data/automation/sonepar:/app/data/sonepar", "documents:/app/data/documents"]
     depends_on:
       migrate: {condition: service_completed_successfully}
     restart: unless-stopped

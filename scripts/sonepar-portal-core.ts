@@ -6,6 +6,7 @@ import { parseSoneparPrices } from "../src/lib/sonepar-prices";
 export type Source = "ya_comprado" | "busqueda" | "sin_consulta";
 export type Product = { supplierRef: string };
 export type Price = {
+  imageUrl?: string | null;
   supplierRef: string; precioBruto: string | null; precioNeto: string | null;
   precioBrutoUnitario?: string | null; precioNetoUnitario?: string | null;
   precioMostradoSinClasificar: string | null; moneda: string | null; unidad: string | null;

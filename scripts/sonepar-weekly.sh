@@ -14,3 +14,8 @@ run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 cp --update=none "$portal/resultado-rico.json" "$portal/runs/$run_stamp.json"
 cp --update=none "$portal/resultado-rico.json.summary.json" "$portal/runs/$run_stamp.summary.json"
 docker compose exec -T sonepar node --import tsx scripts/sonepar-portal-publish.ts /app/data/sonepar/portal/resultado-rico.json
+# Facturas nuevas (PDF + stock) e imágenes de producto. Sin IA; si falla la descarga no se toca la base de datos.
+node --import tsx scripts/sonepar-documents.ts
+docker compose exec -T sonepar node --import tsx scripts/sonepar-import-documents.ts
+node --import tsx scripts/sonepar-images.ts
+docker compose exec -T sonepar node --import tsx scripts/sonepar-import-images.ts

@@ -9,7 +9,7 @@ const amount = (s: string | null) => {
   const m = s?.trim().match(/^([0-9]{1,3}(?:\.[0-9]{3})*|[0-9]+),([0-9]+)\s*€$/);
   return m ? `${m[1].replace(/\./g, "")}.${m[2]}` : null;
 };
-export async function createAdapter(context: BrowserContext, products: { supplierRef: string }[]): Promise<PortalAdapter> {
+export async function createAdapter(context: BrowserContext, products: { supplierRef: string }[], options: { prices?: boolean } = {}): Promise<PortalAdapter> {
   const page = await context.newPage();
   const wanted = new Set(products.map(p => p.supplierRef));
   let rateLimited: RateLimit | null = null;
@@ -53,14 +53,15 @@ export async function createAdapter(context: BrowserContext, products: { supplie
       const visible = (block as HTMLElement | null)?.innerText ?? (card as HTMLElement).innerText;
       const unitText = visible.match(/\bpor\s+(?:(\d+)\s+)?(Unid\.|metros?)/i);
       const byUnit = card.querySelector('[data-testid="price-by-unit-container"]') as HTMLElement | null;
-      return { supplierRef, unitText: unitText?.[0] ?? null, quantity: unitText ? (unitText[1] ?? "1") : null, unit: unitText?.[2] ?? null, visible, byUnit: byUnit?.innerText ?? null };
+      const image = [...card.querySelectorAll("img")].find(img => img.src.startsWith("https://esp-sonesp.mo.cloudinary.net/PRODUCT/IMAGE/") && !/image-default/i.test(img.src));
+      return { supplierRef, imageUrl: image?.src ?? null, unitText: unitText?.[0] ?? null, quantity: unitText ? (unitText[1] ?? "1") : null, unit: unitText?.[2] ?? null, visible, byUnit: byUnit?.innerText ?? null };
     }));
     const result: Price[] = [];
     for (const r of raw.filter(r => r.supplierRef)) {
       let gross: string | null = null; let net: string | null = null;
       let unitGross: string | null = null; let unitNet: string | null = null;
       const shown = [...r.visible.matchAll(/(?:\d{1,3}(?:\.\d{3})*|\d+),\d+\s*€/g)].map(m => m[0]);
-      if (wanted.has(r.supplierRef)) {
+      if (wanted.has(r.supplierRef) && options.prices !== false) {
         const card = page.getByTestId("product-list-card-container").filter({ has: page.getByTestId("productReference").filter({ hasText: `Ref. Sonepar ${r.supplierRef}` }) });
         const legacy = page.getByTestId(`price-tooltip-${r.supplierRef}-button`);
         const button = await legacy.count() === 1 ? legacy : card.getByTestId("tooltip-info-icon");
@@ -85,7 +86,7 @@ export async function createAdapter(context: BrowserContext, products: { supplie
       const supported = classified && r.quantity === "1" && r.unit === "Unid.";
       result.push({ supplierRef: r.supplierRef, precioBruto: gross, precioNeto: net, precioBrutoUnitario: unitGross, precioNetoUnitario: unitNet, precioMostradoSinClasificar: !classified && shown.length ? amount(shown[0]) : null, moneda: shown.length ? "EUR" : null, unidad: r.unit, cantidadPrecioMostrado: r.quantity, packaging: r.unitText, fechaConsulta: new Date().toISOString(), fuente: source, estado: supported ? "verified_unit" : shown.length ? "ambiguous" : "missing", observaciones: supported ? null : `Unidad o clasificación sin verificar${!r.unit && classified ? "; importes etiquetados bruto y neto, base de precio no verificada" : ""}; importes visibles: ${shown.join(", ")}` });
     }
-    return result;
+    return result.map(row => ({ ...row, imageUrl: raw.find(r => r.supplierRef === row.supplierRef)?.imageUrl ?? null }));
   }
   let previousNumber = ""; let previousFingerprint = "";
   async function batch(expected?: string) {
