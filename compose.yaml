@@ -48,6 +48,7 @@ services:
       TTS_URL: http://tts:9100
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_VOICE_MODEL: ${OPENAI_VOICE_MODEL:-gpt-4o-mini}
+      SCANNERS: ${SCANNERS:-}
     volumes: ["documents:/app/data/documents", "./backups:/app/backups:ro"]
     depends_on:
       migrate: {condition: service_completed_successfully}

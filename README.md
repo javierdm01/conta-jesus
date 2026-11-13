@@ -14,6 +14,8 @@ La revisión de documentos muestra ahora la página como escaneada junto al form
 
 ## Servidor de producción
 
+Escaneo desde la impresora de red (eSCL/AirScan) directo al OCR: [docs/ESCANER.md](docs/ESCANER.md).
+
 Con HTTPS, comprobaciones de salud, copias con retención y actualización guiada: [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md) (`bash scripts/deploy.sh`).
 
 ## Arranque en Linux con Docker

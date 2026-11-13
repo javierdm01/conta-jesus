@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Zap,
+  ScanLine,
   LayoutDashboard,
   BriefcaseBusiness,
   Files,
@@ -67,6 +68,7 @@ const VoiceDialog = dynamic(() => import("./voice-dialog"));
 const ExpenseForm = dynamic(() => import("./expenses").then((m) => m.ExpenseForm));
 import { AppSkeleton, PageSkeleton } from "./skeletons";
 import { QuoteBuilder } from "./quote-builder";
+import { ScanPanel } from "./scan-panel";
 import { MaterialPicker } from "./material-picker";
 import { StatusFilter, pillTone } from "./status-filter";
 import { AssistantFab } from "./assistant-fab";
@@ -3498,7 +3500,18 @@ function UploadForm({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [type, setType] = useState(kind),
-    [file, setFile] = useState<File | null>(null);
+    [file, setFile] = useState<File | null>(null),
+    [scanning, setScanning] = useState(false),
+    form = useRef<HTMLFormElement>(null);
+  // Sube con el flujo de siempre (validación, duplicados, OCR); lo usan el botón Subir y el escáner.
+  const send = async (f: File) => {
+    const fd = new FormData(form.current!);
+    await uploadDocument(f, {
+      kind: String(fd.get("kind") ?? type),
+      jobId: String(fd.get("jobId") ?? ""),
+    });
+    await saved(type);
+  };
   const chooseFile = (next: File | null) => {
     setError("");
     if (next && next.size > 20 * 1024 * 1024) {
@@ -3527,6 +3540,7 @@ function UploadForm({
       }
     >
       <form
+        ref={form}
         onSubmit={async (e) => {
           e.preventDefault();
           if (!file) {
@@ -3536,12 +3550,7 @@ function UploadForm({
           setError("");
           setBusy(true);
           try {
-            const fd = new FormData(e.currentTarget);
-            await uploadDocument(file, {
-              kind: String(fd.get("kind") ?? type),
-              jobId: String(fd.get("jobId") ?? ""),
-            });
-            await saved(type);
+            await send(file);
           } catch (e) {
             setError((e as Error).message);
           } finally {
@@ -3616,7 +3625,11 @@ function UploadForm({
             </label>
           )}
         </details>
-        <div className="upload-choices">
+        {scanning ? (
+          <ScanPanel canStart={() => form.current!.reportValidity()} onScanned={send} onBack={() => setScanning(false)} />
+        ) : (
+        <>
+        <div className="upload-choices" style={type === "PHOTO" ? undefined : { gridTemplateColumns: "repeat(3,minmax(0,1fr))" }}>
           <label className="upload-choice">
             <Camera className="mx-auto mb-2" size={24} />
             Hacer foto
@@ -3642,12 +3655,20 @@ function UploadForm({
               onChange={(e) => chooseFile(e.target.files?.[0] ?? null)}
             />
           </label>
+          {type !== "PHOTO" && (
+            <button type="button" className="upload-choice" onClick={() => { setFile(null); setScanning(true); }}>
+              <ScanLine className="mx-auto mb-2" size={24} />
+              Escanear documento
+            </button>
+          )}
         </div>
         <p className="small-note mb-4" role="status">
           {file
             ? `Seleccionado: ${file.name} · ${number(file.size / 1024)} KB`
             : "JPG, PNG, WebP o PDF. Hasta 20 MB y 20 páginas. HEIC: conviértelo a JPG antes de subir."}
         </p>
+        </>
+        )}
         <div className="info-banner">
           <Clock size={24} />
           <div>
