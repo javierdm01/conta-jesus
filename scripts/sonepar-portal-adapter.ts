@@ -83,8 +83,11 @@ export async function createAdapter(context: BrowserContext, products: { supplie
         }
       }
       const classified = gross !== null && net !== null;
-      const supported = classified && r.quantity === "1" && r.unit === "Unid.";
-      result.push({ supplierRef: r.supplierRef, precioBruto: gross, precioNeto: net, precioBrutoUnitario: unitGross, precioNetoUnitario: unitNet, precioMostradoSinClasificar: !classified && shown.length ? amount(shown[0]) : null, moneda: shown.length ? "EUR" : null, unidad: r.unit, cantidadPrecioMostrado: r.quantity, packaging: r.unitText, fechaConsulta: new Date().toISOString(), fuente: source, estado: supported ? "verified_unit" : shown.length ? "ambiguous" : "missing", observaciones: supported ? null : `Unidad o clasificación sin verificar${!r.unit && classified ? "; importes etiquetados bruto y neto, base de precio no verificada" : ""}; importes visibles: ${shown.join(", ")}` });
+      // Sin etiqueta «por Unid.»: se acepta solo si el selector de cantidad está en 1 y su total es exactamente el neto.
+      const selector = r.visible.match(/Selector de cantidad\s+(\d+)\s+((?:\d{1,3}(?:\.\d{3})*|\d+),\d+\s*€)\s*$/);
+      const inferred = classified && !r.unit && !!selector && selector[1] === "1" && amount(selector[2]) === net;
+      const supported = (classified && r.quantity === "1" && r.unit === "Unid.") || inferred;
+      result.push({ supplierRef: r.supplierRef, precioBruto: gross, precioNeto: net, precioBrutoUnitario: unitGross, precioNetoUnitario: unitNet, precioMostradoSinClasificar: !classified && shown.length ? amount(shown[0]) : null, moneda: shown.length ? "EUR" : null, unidad: inferred ? "Unid." : r.unit, cantidadPrecioMostrado: inferred ? "1" : r.quantity, packaging: inferred ? "selector de cantidad = 1" : r.unitText, fechaConsulta: new Date().toISOString(), fuente: source, estado: supported ? "verified_unit" : shown.length ? "ambiguous" : "missing", observaciones: inferred ? "Unidad deducida: el total con cantidad 1 coincide con el neto" : supported ? null : `Unidad o clasificación sin verificar${!r.unit && classified ? "; importes etiquetados bruto y neto, base de precio no verificada" : ""}; importes visibles: ${shown.join(", ")}` });
     }
     return result.map(row => ({ ...row, imageUrl: raw.find(r => r.supplierRef === row.supplierRef)?.imageUrl ?? null }));
   }
