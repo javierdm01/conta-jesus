@@ -137,7 +137,7 @@ export type TemplateLine = { description: string; unit: string; quantity: string
 export type State = {
   templates: { id: string; name: string; lines: TemplateLine[] }[];
   user: { id: string; name: string; role: string; workerId?: string; homeLayout?: unknown };
-  company: { name: string; taxId?: string; defaultMargin?: string; defaultHourlyRate?: string; defaultTax?: string; defaultQuoteMargin?: string };
+  company: { name: string; taxId?: string; defaultMargin?: string; defaultHourlyRate?: string; defaultTax?: string; defaultQuoteMargin?: string; pdfLayout?: unknown };
   jobs: Job[];
   customers: Customer[];
   suppliers: Supplier[];

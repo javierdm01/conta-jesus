@@ -14,6 +14,7 @@ import { userOperation } from "./users";
 import { catalogOperation } from "./catalog";
 import { purchaseOperation } from "./purchases";
 import { deleteDocuments } from "./document-delete";
+import { pdfLayoutSchema } from "./pdf-layout";
 
 type Tx = Prisma.TransactionClient;
 const audit = (tx: Tx, u: Actor, action: string, entityId: string) =>
@@ -791,6 +792,16 @@ export async function operate(u: Actor, action: string, input: unknown) {
       });
       await audit(tx, u, "Actualizar empresa", companyId);
       return row;
+    });
+  }
+  if (action === "pdfLayout") {
+    admin(u);
+    // null restablece el diseño original.
+    const layout = z.object({ layout: pdfLayoutSchema.nullable() }).parse(input).layout;
+    return serial(async (tx) => {
+      await tx.company.update({ where: { id: companyId }, data: { pdfLayout: layout ?? Prisma.DbNull } });
+      await audit(tx, u, "Actualizar plantilla PDF", companyId);
+      return { ok: true };
     });
   }
   if (action === "overhead") {

@@ -15,6 +15,7 @@ model Company {
   defaultHourlyRate Decimal      @default(0) @db.Decimal(12, 4)
   defaultTax     Decimal         @default(21) @db.Decimal(5, 2)
   defaultQuoteMargin Decimal     @default(25) @db.Decimal(5, 2)
+  pdfLayout      Json?
   createdAt      DateTime        @default(now())
   users          User[]
   customers      Customer[]

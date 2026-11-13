@@ -2750,6 +2750,13 @@ export function Dashboard({
                   <div className="kpi"><span>Mano de obra</span><strong>{Number(s.company.defaultHourlyRate) > 0 ? `${euro(s.company.defaultHourlyRate!)} / h` : "Automático"}</strong><small>{Number(s.company.defaultHourlyRate) > 0 ? "Si el cliente no tiene precio propio" : "Coste medio + margen"}</small></div>
                 </div>
               </Panel>
+              <Panel
+                title="Plantilla de facturas y presupuestos"
+                subtitle="Mueve, cambia de tamaño o añade textos y cajas al PDF"
+                action={<a className="text-button" href="/plantilla" target="_blank" rel="noreferrer">Editar plantilla ↗</a>}
+              >
+                <p className="small-note" style={{ padding: "0 24px 20px" }}>Se abre en otra pestaña. Los cambios se aplican a todas las facturas y presupuestos en PDF.</p>
+              </Panel>
               <div className="acct-cols">
                   <Panel
                     title="Equipo y coste laboral"
