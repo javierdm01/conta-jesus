@@ -55,7 +55,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         reference: "",
         unit: c.unit || "ud",
         quantity: qty.toString(),
-        price: cents(dec(c.amount.toString()).div(qty).mul(markup)),
+        price: cents(dec(c.amount.toString()).div(qty)), // precio puesto a mano: se factura tal cual, sin margen
       });
     }
     return Response.json({ items }, { headers: { "Cache-Control": "no-store" } });
