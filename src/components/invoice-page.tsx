@@ -53,6 +53,7 @@ export default function InvoicePage({
   templates,
   refresh,
   onDone,
+  onCancel,
 }: {
   jobs: Job[];
   customers: Customer[];
@@ -66,7 +67,8 @@ export default function InvoicePage({
   mode?: "invoice" | "quote";
   templates: State["templates"];
   refresh: () => Promise<void>;
-  onDone: () => void;
+  onDone: (id?: string) => void;
+  onCancel: () => void;
 }) {
   defaultTax = String(Number(taxProp ?? 21));
   const isQuote = mode === "quote";
@@ -173,8 +175,9 @@ export default function InvoicePage({
     setBusy(true);
     setError("");
     try {
+      let saved: { id?: string } = {};
       if (isQuote)
-        await post("/api/operations/quote-save", {
+        saved = await post("/api/operations/quote-save", {
           jobId: job,
           number,
           date,
@@ -186,7 +189,7 @@ export default function InvoicePage({
           lines: lines.map(({ description, unit, quantity, price, discount }) => ({ description, unit, quantity, price, discount: discount || "0" })),
         });
       else
-      await post(editing ? "/api/operations/sale-update" : "/api/operations/sale", {
+      saved = await post(editing ? "/api/operations/sale-update" : "/api/operations/sale", {
         id: editing?.id,
         jobId: job,
         number,
@@ -202,7 +205,7 @@ export default function InvoicePage({
         lines: lines.map(({ lotId, costId, description, unit, quantity, price, discount }) => ({ lotId, costId, description, unit, quantity, price, discount: discount || "0" })),
       });
       await refresh();
-      onDone();
+      onDone(saved.id);
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -219,7 +222,7 @@ export default function InvoicePage({
         <div className="inv-top">
           <span className="inv-pill"><Clock size={14} /> {isQuote ? "Pendiente de aprobar" : "Pendiente de cobro"}</span>
           <span className="inv-pill">Total: <b>{eur(total)}</b></span>
-          <Button variant="outline" onClick={onDone} disabled={busy}>Cancelar</Button>
+          <Button variant="outline" onClick={onCancel} disabled={busy}>Cancelar</Button>
           <Button loading={busy} disabled={!valid} onClick={submit}>
             {!busy && <Save size={16} />} {busy ? "Guardando…" : isQuote ? "Guardar presupuesto" : "Guardar factura"}
           </Button>

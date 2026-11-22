@@ -1,6 +1,7 @@
 import { currentUser } from "@/lib/access";
 import { db } from "@/lib/db";
 import { apiError } from "@/lib/api-error";
+import { cents, dec } from "@/lib/money";
 import { matchesSearch, recommendedPrice } from "@/lib/product-search";
 export async function GET(req: Request) {
   try {
@@ -56,8 +57,15 @@ export async function GET(req: Request) {
             reference: l.reference,
             unit: l.unit,
             onHand: l.onHand.toString(),
+            brand: l.brand,
+            model: l.model,
+            location: l.location,
             ...(admin
               ? {
+                  unitCost:
+                    l.totalValue != null && l.received.gt(0)
+                      ? cents(dec(l.totalValue.toString()).div(l.received.toString()))
+                      : null,
                   recommendedPrice: recommendedPrice(
                     l.totalValue?.toString(),
                     l.received.toString(),

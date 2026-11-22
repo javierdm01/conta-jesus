@@ -2669,6 +2669,7 @@ export function Dashboard({
                 setToast("Factura actualizada.");
                 router.push(`/facturas-venta/${pathname.split("/")[2]}`);
               }}
+              onCancel={() => router.push(`/facturas-venta/${pathname.split("/")[2]}`)}
             />
           ) : section === "facturas-venta" && isAdmin &&
             (pathname.split("/")[2] ? (
@@ -2714,6 +2715,7 @@ export function Dashboard({
                 setToast("Presupuesto guardado.");
                 router.push("/presupuestos");
               }}
+              onCancel={() => router.back()}
             />
           )}
           {section === "nueva-factura" && isAdmin && (
@@ -2728,10 +2730,11 @@ export function Dashboard({
               defaultTax={s.company.defaultTax}
               templates={s.templates}
               refresh={load}
-              onDone={() => {
+              onDone={(id) => {
                 setToast("Factura guardada.");
-                router.push("/trabajos");
+                router.push(id ? `/facturas-venta/${id}` : "/facturas-venta");
               }}
+              onCancel={() => router.back()}
             />
           )}
           {section === "horas" && isAdmin && <Hours jobs={s.jobs} onAdd={() => createHours()} />}

@@ -6,7 +6,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
-type Item = { id: string; code: string; alias: string; description: string; reference: string; unit: string; onHand: string };
+type Item = { id: string; code: string; alias: string; description: string; reference: string; unit: string; onHand: string; brand?: string; model?: string; location?: string; unitCost?: string | null; recommendedPrice?: string | null };
 type CatalogItem = { id: string; reference: string; supplierRef: string; description: string; alias?: string; brand: string; unit: string; price: string; currentPrice: string | null };
 const unitPrice = (c: CatalogItem) => (Number(c.price) > 0 ? Number(c.price) : Number(c.currentPrice ?? 0)); // tarifa o, si no hay, precio actual de Sonepar
 const fetcher = async (url: string) => {
@@ -19,6 +19,7 @@ const catalogFetcher = async (url: string) => {
   const r = await fetch(url);
   return r.ok ? ((await r.json()) as { items: CatalogItem[] }) : { items: [] };
 };
+const eur = (n?: string | number | null) => (n == null || n === "" ? "" : `${Number(n).toFixed(2).replace(".", ",")} €`);
 const refKey = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+/, "");
 
 
@@ -170,11 +171,15 @@ export function MaterialPicker({
         <div className="person-list" style={{ flex: 1, overflow: "visible" }}>
           <div className="person-card on">
             <strong>{item.alias || item.description}</strong>
-            <small>{[item.reference && `Ref. ${item.reference}`, item.code, `${item.onHand} ${item.unit} en almacén`].filter(Boolean).join(" · ")}</small>
+            <small>{[item.reference && `Ref. ${item.reference}`, item.code, item.brand, item.model, item.location && `Ubicación ${item.location}`, `${item.onHand} ${item.unit} en almacén`].filter(Boolean).join(" · ")}</small>
+            {(item.unitCost || item.recommendedPrice) && (
+              <small>{[item.unitCost && `Coste ${eur(item.unitCost)}/${item.unit}`, item.recommendedPrice && `Precio de venta sugerido ${eur(item.recommendedPrice)}/${item.unit}`].filter(Boolean).join(" · ")}</small>
+            )}
           </div>
           <label>Cantidad usada ({item.unit})
             <input type="number" min="0" step="any" autoFocus value={quantity} onChange={(e) => setQuantity(e.target.value)} />
           </label>
+          {item.unitCost && <p className="small-note">Coste total: {eur(Number(quantity) * Number(item.unitCost) || 0)}{item.recommendedPrice && ` · Venta sugerida: ${eur(Number(quantity) * Number(item.recommendedPrice) || 0)}`}</p>}
           <label>Nota <span className="font-normal text-slate-400">· opcional</span>
             <input value={notes} onChange={(e) => setNotes(e.target.value)} />
           </label>
@@ -201,7 +206,7 @@ export function MaterialPicker({
               <div key={p.id} className="mat-row">
                 <button type="button" className={`person-card${canEdit ? " has-edit" : ""}`} disabled={!Number(p.onHand)} onClick={() => setItem(p)}>
                   <strong>{p.alias || p.description}</strong>
-                  <small>{[p.reference && `Ref. ${p.reference}`, `${p.onHand} ${p.unit} disponibles`].filter(Boolean).join(" · ")}</small>
+                  <small>{[p.reference && `Ref. ${p.reference}`, p.brand, p.model, p.location && `Ubic. ${p.location}`, `${p.onHand} ${p.unit} disponibles`, p.recommendedPrice && `Venta ${eur(p.recommendedPrice)}`].filter(Boolean).join(" · ")}</small>
                 </button>
                 {canEdit && (
                   <button type="button" className="mat-edit" aria-label={`Editar ${p.alias || p.description}`} title="Editar" onClick={() => startEdit(p)}>
