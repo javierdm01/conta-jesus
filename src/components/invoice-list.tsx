@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Banknote, ChevronRight, Eye, FileDown, Mail, Plus, Printer, Search, Trash2 } from "lucide-react";
+import { Banknote, ChevronRight, Eye, FileDown, Mail, Pencil, Plus, Printer, Search, Trash2 } from "lucide-react";
 import type { Sale } from "@/lib/workspace-types";
 import { saleDue, saleStatus, saleTotal, type SaleStatus } from "@/lib/sales-view";
 
@@ -36,6 +36,7 @@ export function InvoiceActions({ sale, onNew, onPayment, onDelete, open = true }
           `Hola,\n\nTe envío la factura ${sale.number} por importe de ${eur(saleTotal(sale).toString())}.\nAdjunto el PDF.\n\nUn saludo.`,
         )}`),
       )}
+      {btn("Editar", <Pencil size={18} />, () => sale && router.push(`/facturas-venta/${sale.id}/editar`))}
       {btn("Cobro", <Banknote size={18} />, () => sale && onPayment(sale))}
       {onDelete && (
         <button type="button" className="ib danger inv-trash" title="Eliminar factura" aria-label="Eliminar factura" disabled={off} onClick={() => sale && onDelete(sale)}>

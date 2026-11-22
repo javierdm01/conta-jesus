@@ -29,6 +29,10 @@ export type Cost = {
   description: string;
   amount: string;
   documentId?: string;
+  quantity?: string | null;
+  unit?: string;
+  notes?: string;
+  stockMovementId?: string | null;
 };
 export type Hours = {
   id: string;
@@ -38,6 +42,8 @@ export type Hours = {
   notes: string;
   billable?: boolean;
   worker?: Worker;
+  startTime?: string;
+  endTime?: string;
 };
 export type Quote = {
   id: string;
@@ -71,7 +77,7 @@ export type Sale = {
   customerId?: string;
   customerName?: string;
   customerEmail?: string;
-  lines?: {id:string;description:string;unit:string;quantity:string;price:string;discount?:string;net:string}[];
+  lines?: {id:string;lotId?:string|null;costId?:string|null;description:string;unit:string;quantity:string;price:string;discount?:string;net:string}[];
 };
 export type Metrics = {
   net: string;

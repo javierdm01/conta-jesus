@@ -1,0 +1,1 @@
+ALTER TABLE "SaleLine" ADD COLUMN "costId" TEXT;

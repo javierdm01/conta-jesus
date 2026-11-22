@@ -12,12 +12,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     await accessibleJob(u, id);
     const company = await db.company.findUniqueOrThrow({ where: { id: u.companyId }, select: { defaultMargin: true } });
     const markup = dec(1).plus(dec(company.defaultMargin.toString()).div(100));
-    const [moves, billed] = await Promise.all([
+    const [moves, billed, manual] = await Promise.all([
       db.stockMovement.findMany({
         where: { companyId: u.companyId, jobId: id, kind: { in: ["USE", "RETURN"] } },
         include: { lot: { select: { id: true, alias: true, description: true, unit: true, reference: true } } },
       }),
-      db.saleLine.findMany({ where: { sale: { jobId: id, companyId: u.companyId }, lotId: { not: null } } }),
+      db.saleLine.findMany({ where: { sale: { jobId: id, companyId: u.companyId }, OR: [{ lotId: { not: null } }, { costId: { not: null } }] } }),
+      // Material apuntado a mano (sin almacén): se factura entero una sola vez.
+      db.cost.findMany({ where: { companyId: u.companyId, jobId: id, type: "Materiales", reversed: false, stockMovementId: null } }),
     ]);
     const byLot = new Map<string, { lot: (typeof moves)[number]["lot"]; qty: ReturnType<typeof dec>; cost: ReturnType<typeof dec> }>();
     for (const m of moves) {
@@ -27,7 +29,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       cur.cost = cur.cost.plus(dec(m.amount?.toString() ?? 0).mul(sign));
       byLot.set(m.lotId, cur);
     }
-    const items = [...byLot.entries()].flatMap(([lotId, x]) => {
+    type Item = { lotId?: string; costId?: string; description: string; reference: string; unit: string; quantity: string; price: string };
+    const items: Item[] = [...byLot.entries()].flatMap(([lotId, x]): Item[] => {
       const done = sum(billed.filter((b) => b.lotId === lotId).map((b) => b.quantity.toString()));
       const pending = x.qty.minus(done);
       if (pending.lte(0)) return [];
@@ -42,6 +45,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         price,
       }];
     });
+    const billedCosts = new Set(billed.map((b) => b.costId));
+    for (const c of manual) {
+      if (billedCosts.has(c.id)) continue;
+      const qty = c.quantity && dec(c.quantity.toString()).gt(0) ? dec(c.quantity.toString()) : dec(1);
+      items.push({
+        costId: c.id,
+        description: c.description,
+        reference: "",
+        unit: c.unit || "ud",
+        quantity: qty.toString(),
+        price: cents(dec(c.amount.toString()).div(qty).mul(markup)),
+      });
+    }
     return Response.json({ items }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return apiError(e);

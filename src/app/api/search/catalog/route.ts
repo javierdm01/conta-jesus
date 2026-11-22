@@ -18,7 +18,7 @@ export async function GET(req: Request) {
       where: { companyId: u.companyId },
       orderBy: [{ description: "asc" }],
     });
-    const found = rows.filter((r) => (!noPriceOnly || r.price.lte(0)) && matchesSearch(q, [r.reference, r.description, r.brand, r.supplier, r.supplierRef]));
+    const found = rows.filter((r) => (!noPriceOnly || r.price.lte(0)) && matchesSearch(q, [r.alias, r.reference, r.description, r.brand, r.supplier, r.supplierRef]));
     const start = pageSize ? (page - 1) * pageSize : 0;
     return Response.json(
       {

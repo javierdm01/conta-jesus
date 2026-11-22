@@ -1,4 +1,4 @@
-export type CatalogRow = { reference: string; description: string; brand: string; unit: string; price: string; supplier?: string; supplierRef?: string; currentPrice?: string; currentPriceAt?: string; imageUrl?: string };
+export type CatalogRow = { reference: string; description: string; alias?: string; brand: string; unit: string; price: string; supplier?: string; supplierRef?: string; currentPrice?: string; currentPriceAt?: string; imageUrl?: string };
 
 const HEADERS: Record<"reference" | "description" | "brand" | "unit" | "price" | "supplier" | "supplierRef", string[]> = {
   reference: ["referencia", "ref", "codigo", "sku", "reference"],

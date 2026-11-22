@@ -5,6 +5,7 @@ import { dec, lineNet } from "@/lib/money";
 export type Line = {
   key: string;
   lotId?: string;
+  costId?: string;
   catalogId?: string;
   description: string;
   unit: string;

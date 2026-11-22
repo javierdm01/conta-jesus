@@ -328,6 +328,9 @@ model Cost {
   type            String
   description     String
   amount          Decimal        @db.Decimal(14, 2)
+  quantity        Decimal?       @db.Decimal(14, 4)
+  unit            String         @default("")
+  notes           String         @default("")
   date            DateTime       @default(now())
   documentId      String?
   document        Document?      @relation(fields: [documentId], references: [id])
@@ -486,6 +489,8 @@ model SaleLine {
   sale        Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
   lotId       String?
   lot         StockLot? @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  // Coste de material manual (sin almacén) que esta línea factura; evita facturarlo dos veces.
+  costId      String?
   description String
   unit        String
   quantity    Decimal @db.Decimal(14, 4)
@@ -625,6 +630,8 @@ model CatalogItem {
   company     Company  @relation(fields: [companyId], references: [id])
   reference   String   @default("")
   description String
+  // Nombre corto con el que lo llama la empresa; si está, se muestra en lugar de la descripción.
+  alias       String   @default("")
   brand       String   @default("")
   unit        String   @default("ud")
   price       Decimal  @db.Decimal(14, 4)

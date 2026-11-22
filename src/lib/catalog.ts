@@ -4,7 +4,7 @@ import { admin, AppError, type Actor } from "./access";
 import * as v from "./validation";
 
 const unit = z.string().trim().min(1).max(12).default("ud");
-const item = z.object({ reference: v.text, description: v.name, brand: v.text, unit, price: v.price, supplier: v.text, supplierRef: v.text, currentPrice: v.price.optional(), currentPriceAt: v.date.optional(), imageUrl: z.string().max(500).regex(/^(https:\/\/.*)?$/).optional() });
+const item = z.object({ reference: v.text, description: v.name, alias: z.string().trim().max(200).optional(), brand: v.text, unit, price: v.price, supplier: v.text, supplierRef: v.text, currentPrice: v.price.optional(), currentPriceAt: v.date.optional(), imageUrl: z.string().max(500).regex(/^(https:\/\/.*)?$/).optional() });
 // Fecha (AAAA-MM-DD) → Date para la base de datos.
 const withDate = <T extends { currentPriceAt?: string }>(i: T) => ({ ...i, currentPriceAt: i.currentPriceAt ? new Date(i.currentPriceAt) : undefined });
 export const invoiceLine = z.object({

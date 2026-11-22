@@ -217,9 +217,23 @@ export async function operate(u: Actor, action: string, input: unknown) {
       return { id: row.id };
     });
   }
-  if (action === "hours") {
+  if (action === "hours-delete") {
+    const { id } = z.object({ id: v.id }).parse(input);
+    const row = await db.timeEntry.findFirst({ where: { id, companyId } });
+    if (!row) throw new AppError("Parte de horas no encontrado.", 404);
+    await accessibleJob(u, row.jobId);
+    if (u.role !== "ADMIN" && u.worker?.id !== row.workerId)
+      throw new AppError("Solo puedes borrar tus propias horas.", 403);
+    return serial(async (tx) => {
+      await tx.timeEntry.delete({ where: { id } });
+      await audit(tx, u, "Eliminar horas", id);
+      return { id };
+    });
+  }
+  if (action === "hours" || action === "hours-update") {
     const d = z
       .object({
+        id: v.id.optional(),
         jobId: v.id,
         workerId: v.id,
         date: v.date,
@@ -239,6 +253,16 @@ export async function operate(u: Actor, action: string, input: unknown) {
         requestKey: v.requestKey,
       })
       .parse(input);
+    const editing =
+      action === "hours-update"
+        ? await db.timeEntry.findFirst({ where: { id: d.id ?? "", companyId } })
+        : null;
+    if (action === "hours-update") {
+      if (!editing) throw new AppError("Parte de horas no encontrado.", 404);
+      await accessibleJob(u, editing.jobId);
+      if (u.role !== "ADMIN" && u.worker?.id !== editing.workerId)
+        throw new AppError("Solo puedes cambiar tus propias horas.", 403);
+    }
     const minutes = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
     if (minutes(d.endTime) <= minutes(d.startTime))
       throw new AppError("La hora de fin debe ser posterior a la de inicio.");
@@ -252,7 +276,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
         where: { id: d.workerId },
       });
       const previous = await tx.timeEntry.findMany({
-        where: { workerId: d.workerId, date: new Date(d.date) },
+        where: { workerId: d.workerId, date: new Date(d.date), id: { not: editing?.id ?? "" } },
       });
       if (
         sum(previous.map((x) => x.hours.toString()))
@@ -260,48 +284,83 @@ export async function operate(u: Actor, action: string, input: unknown) {
           .gt(24)
       )
         throw new AppError("El total diario del técnico supera 24 horas.");
-      const row = await tx.timeEntry.create({
-        data: {
-          ...d,
-          hours,
-          companyId,
-          date: new Date(d.date),
-          hourlyCost: worker.hourlyCost,
-        },
-      });
-      await audit(tx, u, "Registrar horas", row.id);
+      const { id: _id, requestKey, ...fields } = d;
+      const data = { ...fields, hours, date: new Date(d.date) };
+      // Al editar se conserva la tarifa del registro salvo que cambie el técnico.
+      const row = editing
+        ? await tx.timeEntry.update({
+            where: { id: editing.id },
+            data: { ...data, hourlyCost: editing.workerId === d.workerId ? editing.hourlyCost : worker.hourlyCost },
+          })
+        : await tx.timeEntry.create({ data: { ...data, requestKey, companyId, hourlyCost: worker.hourlyCost } });
+      await audit(tx, u, editing ? "Editar horas" : "Registrar horas", row.id);
       return { id: row.id };
     });
   }
-  if (action === "cost") {
+  if (action === "cost" || action === "cost-update") {
+    const costTypes = z.enum([
+      "Materiales",
+      "Desplazamiento",
+      "Subcontratación",
+      "Otros",
+      "Gastos generales asignados",
+    ]);
     const d = z
       .object({
-        jobId: v.id,
-        type: z.enum([
-          "Materiales",
-          "Desplazamiento",
-          "Subcontratación",
-          "Otros",
-          "Gastos generales asignados",
-        ]),
+        id: v.id.optional(),
+        jobId: v.id.optional(),
+        type: costTypes,
         description: v.name,
-        amount: v.money,
-        requestKey: v.requestKey,
+        // Con cantidad y precio unitario el importe se calcula; si no, vale el importe total.
+        quantity: v.quantity.optional(),
+        unit: z.string().trim().max(12).default(""),
+        price: v.price.optional(),
+        amount: v.money.optional(),
+        notes: v.text,
+        requestKey: v.requestKey.optional(),
       })
       .parse(input);
-    await accessibleJob(u, d.jobId);
+    const amount = d.quantity && d.price !== undefined ? cents(dec(d.quantity).mul(d.price)) : d.amount;
+    if (amount === undefined) throw new AppError("Indica el precio o el importe.");
+    const data = { type: d.type, description: d.description, quantity: d.quantity ?? null, unit: d.unit, notes: d.notes, amount };
     // El técnico saca material del almacén (stock-move); los importes los pone el responsable.
     admin(u);
+    if (action === "cost-update") {
+      const cost = await db.cost.findFirst({ where: { id: d.id ?? "", companyId, reversed: false } });
+      if (!cost) throw new AppError("Coste no encontrado.", 404);
+      if (cost.stockMovementId) throw new AppError("Este material sale del almacén: cámbialo desde su línea de almacén.");
+      return serial(async (tx) => {
+        await tx.cost.update({ where: { id: cost.id }, data });
+        await audit(tx, u, "Editar coste", cost.id);
+        return { id: cost.id };
+      });
+    }
+    if (!d.jobId || !d.requestKey) throw new AppError("Selecciona el trabajo.");
+    await accessibleJob(u, d.jobId);
     return serial(async (tx) => {
-      const row = await tx.cost.create({ data: { ...d, companyId } });
+      const row = await tx.cost.create({ data: { ...data, jobId: d.jobId!, requestKey: d.requestKey!, companyId } });
       await audit(tx, u, "Registrar coste", row.id);
       return { id: row.id };
     });
   }
-  if (action === "sale") {
+  if (action === "cost-delete") {
+    admin(u);
+    const { id } = z.object({ id: v.id }).parse(input);
+    const cost = await db.cost.findFirst({ where: { id, companyId, reversed: false } });
+    if (!cost) throw new AppError("Coste no encontrado.", 404);
+    // El material de almacén vuelve a sus existencias; el resto se anula (queda en el historial, fuera de los totales).
+    if (cost.stockMovementId) return inventoryOperation(u, "stock-use-delete", { movementId: cost.stockMovementId });
+    return serial(async (tx) => {
+      await tx.cost.update({ where: { id }, data: { reversed: true } });
+      await audit(tx, u, "Eliminar coste", id);
+      return { id };
+    });
+  }
+  if (action === "sale" || action === "sale-update") {
     admin(u);
     const d = z
       .object({
+        id: v.id.optional(),
         jobId: v.id,
         number: v.name,
         description: v.name,
@@ -312,12 +371,13 @@ export async function operate(u: Actor, action: string, input: unknown) {
         withholding: v.money,
         collected: v.money,
         notes: v.text,
-        requestKey: v.requestKey,
+        requestKey: v.requestKey.optional(),
         documentId: v.id.optional(),
         lines: z
           .array(
             z.object({
               lotId: v.id.optional(),
+              costId: v.id.optional(),
               description: v.name,
               unit: z.string().trim().min(1).max(12).default("ud"),
               quantity: v.quantity,
@@ -331,6 +391,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
       })
       .parse(input);
     await accessibleJob(u, d.jobId);
+    if (action === "sale" && !d.requestKey) throw new AppError("Falta la clave de la operación.");
     if (
       dec(d.withholding).gt(d.net) ||
       dec(d.collected).gt(dec(d.net).plus(d.tax).minus(d.withholding))
@@ -367,6 +428,25 @@ export async function operate(u: Actor, action: string, input: unknown) {
         throw new AppError(
           "Las líneas de artículos no coinciden con la base de la factura.",
         );
+      if (action === "sale-update") {
+        const old = await tx.sale.findFirst({ where: { id: d.id ?? "", companyId }, select: { id: true } });
+        if (!old) throw new AppError("Factura no encontrada.", 404);
+        const { id: _id, documentId: _doc, requestKey: _rk, ...fields } = d;
+        // Se reescriben datos y líneas; el cobro y los adjuntos se conservan.
+        await tx.saleLine.deleteMany({ where: { saleId: old.id } });
+        const row = await tx.sale.update({
+          where: { id: old.id },
+          data: {
+            ...fields,
+            lines: { create: saleLines },
+            number: d.number.trim().toUpperCase(),
+            date: new Date(d.date),
+            dueAt: d.dueAt ? new Date(d.dueAt) : null,
+          },
+        });
+        await audit(tx, u, `Editar factura ${row.number}`, row.id);
+        return row;
+      }
       if (d.documentId) {
         const doc = await tx.document.findFirst({
           where: {
@@ -392,6 +472,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
       const row = await tx.sale.create({
         data: {
           ...d,
+          requestKey: d.requestKey!,
           lines: saleLines.length ? { create: saleLines } : undefined,
           number: d.number.trim().toUpperCase(),
           companyId,

@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import useSWR from "swr";
 import { useSearchParams } from "next/navigation";
-import { ChevronLeft, ChevronRight, ExternalLink, Plus, Search, Trash2, ZapOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, Pencil, Plus, Search, Trash2, ZapOff } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -95,8 +95,9 @@ export default function Catalog() {
     [noPrice, setNoPrice] = useState(false),
     [open, setOpen] = useState(""),
     [adding, setAdding] = useState(false),
+    [editId, setEditId] = useState(""),
     [del, setDel] = useState<{ id: string; description: string } | null>(null),
-    [draft, setDraft] = useState<CatalogRow>({ reference: "", description: "", brand: "", unit: "ud", price: "" }),
+    [draft, setDraft] = useState<CatalogRow>({ reference: "", description: "", alias: "", brand: "", unit: "ud", price: "", supplier: "", supplierRef: "" }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const linked = useSearchParams().get("q"); // viene del buscador general
@@ -117,7 +118,7 @@ export default function Catalog() {
           <p className="subtitle">Tu base de conocimiento: se elige al hacer un presupuesto, sin tocar el almacén.</p>
         </div>
         <div className="actions">
-          <Button onClick={() => setAdding(true)}><Plus size={16} /> Añadir artículo</Button>
+          <Button onClick={() => { setEditId(""); setDraft({ reference: "", description: "", alias: "", brand: "", unit: "ud", price: "", supplier: "", supplierRef: "" }); setAdding(true); }}><Plus size={16} /> Añadir artículo</Button>
         </div>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
@@ -148,9 +149,10 @@ export default function Catalog() {
                       <div className="cat-art">
                         <div className="cat-art-top">
                           <Thumb src={i.imageUrl} />
-                          <span>{i.description}</span>
+                          <span>{i.alias || i.description}</span>
                         </div>
                         <small className="muted">
+                          {i.alias && <>{i.description}<br /></>}
                           {[i.reference && `Ref. ${i.reference}`, i.supplierRef && i.supplierRef !== i.reference ? `Ref. prov. ${i.supplierRef}` : "", i.brand, i.supplier].filter(Boolean).join(" · ")}
                         </small>
                       </div>
@@ -170,6 +172,20 @@ export default function Catalog() {
                         </a>
                       )}
 
+                      <button
+                        type="button"
+                        aria-label={`Editar ${i.description}`}
+                        title="Editar"
+                        className="ib"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditId(i.id);
+                          setDraft({ reference: i.reference, description: i.description, alias: i.alias ?? "", brand: i.brand, unit: i.unit, price: Number(i.price) ? String(Number(i.price)) : "0", supplier: i.supplier, supplierRef: i.supplierRef });
+                          setAdding(true);
+                        }}
+                      >
+                        <Pencil size={16} />
+                      </button>
                       <button
                         type="button"
                         aria-label={`Borrar ${i.description}`}
@@ -207,7 +223,7 @@ export default function Catalog() {
         </div>
       )}
       {adding && (
-        <Dialog open onOpenChange={(v) => !v && !busy && setAdding(false)} title="Añadir artículo">
+        <Dialog open onOpenChange={(v) => !v && !busy && setAdding(false)} title={editId ? "Editar artículo" : "Añadir artículo"}>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -215,9 +231,8 @@ export default function Catalog() {
               setBusy(true);
               setError("");
               try {
-                await op("catalog-save", { ...draft, price: draft.price.replace(",", ".") });
+                await op("catalog-save", { ...draft, ...(editId ? { id: editId } : {}), price: draft.price.replace(",", ".") });
                 setAdding(false);
-                setDraft({ reference: "", description: "", brand: "", unit: "ud", price: "" });
                 await mutate();
               } catch (err) {
                 setError((err as Error).message);
@@ -227,11 +242,14 @@ export default function Catalog() {
             }}
           >
             <div className="form-grid">
-              <label className="full">Descripción<input required autoFocus value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
+              <label className="full">Nombre corto <span className="font-normal text-slate-400">· como lo llamas tú, opcional</span><input autoFocus value={draft.alias ?? ""} onChange={(e) => setDraft({ ...draft, alias: e.target.value })} /></label>
+              <label className="full">Descripción<input required value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
               <label>Referencia<input value={draft.reference} onChange={(e) => setDraft({ ...draft, reference: e.target.value })} /></label>
               <label>Marca<input value={draft.brand} onChange={(e) => setDraft({ ...draft, brand: e.target.value })} /></label>
               <label>Unidad<input required value={draft.unit} onChange={(e) => setDraft({ ...draft, unit: e.target.value })} /></label>
               <label>Precio (€)<input required inputMode="decimal" value={draft.price} onChange={(e) => setDraft({ ...draft, price: e.target.value })} /></label>
+              <label>Proveedor<input value={draft.supplier ?? ""} onChange={(e) => setDraft({ ...draft, supplier: e.target.value })} /></label>
+              <label>Ref. proveedor<input value={draft.supplierRef ?? ""} onChange={(e) => setDraft({ ...draft, supplierRef: e.target.value })} /></label>
             </div>
             {error && <p className="error" role="alert">{error}</p>}
             <div className="form-footer">

@@ -9,7 +9,7 @@ import { cents, dec, quotePrice } from "@/lib/money";
 import type { Job, Worker } from "@/lib/workspace-types";
 import { LinesEditor, linesNet, newLine, type Line } from "./lines-editor";
 
-type Item = { id: string; reference: string; description: string; brand: string; unit: string; price: string; supplier: string };
+type Item = { id: string; reference: string; description: string; alias?: string; brand: string; unit: string; price: string; supplier: string };
 const eur = (n: string | number) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(Number(n));
 const fetcher = async (url: string) => {
   const r = await fetch(url);
@@ -50,7 +50,7 @@ export function CatalogPicker({ onAdd, close }: { onAdd: (i: Item) => void; clos
               setAdded((n) => n + 1);
             }}
           >
-            <strong>{i.description}</strong>
+            <strong>{i.alias || i.description}</strong>
             <small>{[i.reference && `Ref. ${i.reference}`, i.brand, i.supplier, `${eur(i.price)} / ${i.unit}`].filter(Boolean).join(" · ")}</small>
           </button>
         ))}

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
 type Item = { id: string; code: string; alias: string; description: string; reference: string; unit: string; onHand: string };
-type CatalogItem = { id: string; reference: string; supplierRef: string; description: string; brand: string; unit: string; price: string; currentPrice: string | null };
+type CatalogItem = { id: string; reference: string; supplierRef: string; description: string; alias?: string; brand: string; unit: string; price: string; currentPrice: string | null };
 const unitPrice = (c: CatalogItem) => (Number(c.price) > 0 ? Number(c.price) : Number(c.currentPrice ?? 0)); // tarifa o, si no hay, precio actual de Sonepar
 const fetcher = async (url: string) => {
   const r = await fetch(url);
@@ -21,9 +21,6 @@ const catalogFetcher = async (url: string) => {
 };
 const refKey = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+/, "");
 
-/** Texto del coste de un material del catálogo: «2 ud × Cable 2,5 (Ref. X)». */
-export const catalogCostText = (quantity: string | number, c: Pick<CatalogItem, "unit" | "description" | "reference">) =>
-  `${Number(quantity)} ${c.unit} × ${c.description}${c.reference ? ` (Ref. ${c.reference})` : ""}`.slice(0, 200);
 
 // Busca material del almacén y lo descuenta directamente en el trabajo (con su coste real). Con `catalog` (solo el
 // responsable), debajo salen también los artículos del catálogo: se apuntan como coste de materiales a precio de tarifa.
@@ -77,7 +74,7 @@ export function MaterialPicker({
         ? await fetch("/api/operations/cost", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ jobId: job, type: "Materiales", description: (catalogCostText(quantity, cat) + (notes.trim() ? ` · ${notes.trim()}` : "")).slice(0, 200), amount: (Number(quantity) * Number(price)).toFixed(2), requestKey: key }),
+            body: JSON.stringify({ jobId: job, type: "Materiales", description: `${cat.alias || cat.description}${cat.reference ? ` (Ref. ${cat.reference})` : ""}`.slice(0, 200), quantity, unit: cat.unit, price, notes, requestKey: key }),
           })
         : await fetch("/api/operations/stock-move", {
             method: "POST",
@@ -148,8 +145,8 @@ export function MaterialPicker({
       ) : cat ? (
         <div className="person-list" style={{ flex: 1, overflow: "visible" }}>
           <div className="person-card on">
-            <strong>{cat.description}</strong>
-            <small>{[cat.reference && `Ref. ${cat.reference}`, cat.brand, "del catálogo · no descuenta del almacén"].filter(Boolean).join(" · ")}</small>
+            <strong>{cat.alias || cat.description}</strong>
+            <small>{[cat.alias && cat.description, cat.reference && `Ref. ${cat.reference}`, cat.brand, "del catálogo · no descuenta del almacén"].filter(Boolean).join(" · ")}</small>
           </div>
           <label>Cantidad usada ({cat.unit})
             <input type="number" min="0" step="any" autoFocus value={quantity} onChange={(e) => setQuantity(e.target.value)} />
@@ -219,8 +216,8 @@ export function MaterialPicker({
                 {catItems.map((c) => (
                   <div key={c.id} className="mat-row">
                     <button type="button" className="person-card" onClick={() => (setCat(c), setPrice(unitPrice(c) > 0 ? String(unitPrice(c)) : ""))}>
-                      <strong>{c.description}</strong>
-                      <small>{[c.reference && `Ref. ${c.reference}`, c.brand, unitPrice(c) > 0 ? `${unitPrice(c).toFixed(2).replace(".", ",")} € / ${c.unit}` : "sin precio"].filter(Boolean).join(" · ")}</small>
+                      <strong>{c.alias || c.description}</strong>
+                      <small>{[c.alias && c.description, c.reference && `Ref. ${c.reference}`, c.brand, unitPrice(c) > 0 ? `${unitPrice(c).toFixed(2).replace(".", ",")} € / ${c.unit}` : "sin precio"].filter(Boolean).join(" · ")}</small>
                     </button>
                   </div>
                 ))}

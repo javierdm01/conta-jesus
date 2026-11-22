@@ -113,11 +113,16 @@ async function valueLot(tx: Tx, lot: StockLot) {
         date: m.createdAt,
         documentId: lot.invoiceDocumentId ?? lot.documentId,
         stockMovementId: m.id,
+        quantity: m.quantity,
+        unit: lot.unit,
+        notes: m.notes,
       };
       if (!m.cost) await tx.cost.create({ data });
       else if (
         !dec(m.cost.amount.toString()).eq(signed) ||
-        m.cost.documentId !== data.documentId
+        m.cost.documentId !== data.documentId ||
+        m.cost.notes !== m.notes ||
+        !dec(m.cost.quantity?.toString() ?? 0).eq(m.quantity.toString())
       )
         await tx.cost.update({ where: { id: m.cost.id }, data });
     }
@@ -138,6 +143,55 @@ export async function inventoryOperation(
   action: string,
   input: unknown,
 ) {
+  // Corregir o quitar un consumo de almacén desde el trabajo: las existencias y el coste se recalculan.
+  if (action === "stock-use-edit" || action === "stock-use-delete") {
+    admin(u);
+    const d = z
+      .object({ movementId: v.id, quantity: v.quantity.optional(), notes: v.text })
+      .parse(input);
+    return serial(async (tx) => {
+      const m = await tx.stockMovement.findFirst({
+        where: { id: d.movementId, companyId: u.companyId, kind: "USE" },
+        include: { returns: true, cost: true, lot: { include: { reservations: true } } },
+      });
+      if (!m) throw new AppError("Consumo no encontrado.", 404);
+      if (m.returns.length)
+        throw new AppError("Este consumo ya tiene devoluciones: corrígelo desde el almacén.");
+      const lot = m.lot;
+      const next = action === "stock-use-delete" ? dec(0) : dec(d.quantity ?? m.quantity.toString());
+      if (next.gt(0))
+        try {
+          quantityForUnit(next.toString(), lot.unit);
+        } catch (e) {
+          throw new AppError((e as Error).message);
+        }
+      const diff = next.minus(m.quantity.toString());
+      // shortcut: lo reservado (también para este trabajo) no se puede gastar al aumentar; se añade como otra línea.
+      const free = dec(lot.onHand.toString()).minus(sum(lot.reservations.map((r) => r.quantity.toString())));
+      if (diff.gt(free))
+        throw new AppError("No hay suficiente material libre en el almacén.", 409);
+      if (next.eq(0)) {
+        if (m.cost) await tx.cost.delete({ where: { id: m.cost.id } });
+        await tx.stockMovement.delete({ where: { id: m.id } });
+      } else
+        await tx.stockMovement.update({
+          where: { id: m.id },
+          data: { quantity: next.toString(), notes: d.notes },
+        });
+      const updated = await tx.stockLot.update({
+        where: { id: lot.id },
+        data: { onHand: dec(lot.onHand.toString()).minus(diff).toString() },
+      });
+      await valueLot(tx, updated);
+      await audit(
+        tx,
+        u,
+        next.eq(0) ? `Almacén: quitar consumo · ${m.quantity} ${lot.unit}` : `Almacén: corregir consumo · ${m.quantity} → ${next} ${lot.unit}`,
+        lot.id,
+      );
+      return { id: m.id };
+    });
+  }
   if (action === "stock-confirm") {
     admin(u);
     const d = z

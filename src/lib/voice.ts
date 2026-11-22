@@ -440,20 +440,20 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[], ext
       const hits = lots.filter((l) => matchesSearch(intent.item, [l.alias, l.description, l.reference, l.brand, l.model, l.code])).sort((a, b) => Number(b.onHand) - Number(a.onHand));
       if (!hits.length) {
         // Primero el almacén; si no está, el catálogo (solo el responsable): se apunta como coste de materiales a precio de tarifa.
-        const cat = u.role === "ADMIN" ? (await db.catalogItem.findMany({ where: { companyId }, orderBy: { description: "asc" } })).filter((c) => matchesSearch(intent.item, [c.reference, c.supplierRef, c.description, c.brand])) : [];
+        const cat = u.role === "ADMIN" ? (await db.catalogItem.findMany({ where: { companyId }, orderBy: { description: "asc" } })).filter((c) => matchesSearch(intent.item, [c.alias, c.reference, c.supplierRef, c.description, c.brand])) : [];
         const unitPrice = (x: (typeof cat)[number]) => (Number(x.price) > 0 ? Number(x.price) : Number(x.currentPrice ?? 0)); // tarifa o, si no hay, precio actual de Sonepar
         const c = cat.find((x) => unitPrice(x) > 0) ?? cat[0];
         if (!c) return { transcript, message: `No tengo «${intent.item}» en el almacén${u.role === "ADMIN" ? " ni en el catálogo" : " con existencias"}.` };
         if (!(unitPrice(c) > 0)) return { transcript, message: `«${c.description}» está en el catálogo pero sin precio. Ponle precio en el catálogo o añádelo desde el trabajo.` };
         const amount = (intent.quantity * unitPrice(c)).toFixed(2);
-        const text = `${intent.quantity} ${c.unit} × ${c.description}${c.reference ? ` (Ref. ${c.reference})` : ""}`.slice(0, 200);
+        const text = `${c.alias || c.description}${c.reference ? ` (Ref. ${c.reference})` : ""}`.slice(0, 200);
         return {
           transcript,
           proposal: {
             text: transcript,
             action: "cost",
             summary: `Material del catálogo (no está en el almacén): ${intent.quantity} × ${c.description}, ${amount.replace(".", ",")} € ·${job.customer.name} · ${job.number} ${job.name}${cat.length > 1 ? ` (hay ${cat.length} artículos parecidos)` : ""}`,
-            payload: { jobId: job.id, type: "Materiales", description: text, amount, requestKey: crypto.randomUUID() },
+            payload: { jobId: job.id, type: "Materiales", description: text, quantity: String(intent.quantity), unit: c.unit, price: String(unitPrice(c)), requestKey: crypto.randomUUID() },
           },
         };
       }
@@ -551,7 +551,7 @@ async function interpretOrder(u: Actor, transcript: string, history: Turn[], ext
       const lots = await db.stockLot.findMany({ where: { companyId, archivedAt: null }, select: { alias: true, description: true, reference: true, brand: true, model: true, code: true, onHand: true, unit: true } });
       const hit = lots.filter((l) => matchesSearch(q, [l.alias, l.description, l.reference, l.brand, l.model, l.code]));
       if (!hit.length) {
-        const cat = (await db.catalogItem.findMany({ where: { companyId }, take: 2000 })).filter((c) => matchesSearch(q, [c.reference, c.description, c.brand, c.supplier, c.supplierRef]));
+        const cat = (await db.catalogItem.findMany({ where: { companyId }, take: 2000 })).filter((c) => matchesSearch(q, [c.alias, c.reference, c.description, c.brand, c.supplier, c.supplierRef]));
         if (cat.length) return show("En el catálogo", cat.map((c) => ({ label: c.description, detail: Number(c.price) > 0 ? `${Number(c.price).toFixed(2)} €` : "", href: "/catalogo" })), `No hay «${q}» en el almacén, pero está en el catálogo.`, "");
         return { transcript, message: `No tengo «${q}» en el almacén.` };
       }

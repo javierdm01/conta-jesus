@@ -115,6 +115,8 @@ import type {
   State,
   Sale,
   Metrics,
+  Cost,
+  Hours as HoursEntry,
 } from "@/lib/workspace-types";
 type Field = {
   name: string;
@@ -771,12 +773,25 @@ export function Dashboard({
       setError((e as Error).message);
     }
   };
-  const createCost = () =>
-    setModal({
-      title: "Añadir material o gasto",
-      action: "cost",
+  const createCost = (c?: Cost) => {
+    // Material sacado del almacén: solo cantidad y nota; el coste lo recalcula el almacén.
+    if (c?.stockMovementId)
+      return setModal({
+        title: "Editar material del almacén",
+        action: "stock-use-edit",
+        fixed: { movementId: c.stockMovementId },
+        fields: [
+          { ...field("quantity", `Cantidad usada${c.unit ? ` (${c.unit})` : ""}`, "number", c.quantity ? String(Number(c.quantity)) : ""), hint: "Al bajarla, lo que sobra vuelve al almacén." },
+          field("notes", "Nota", "textarea", c.notes ?? "", false),
+        ],
+      });
+    const qty = Number(c?.quantity ?? 1) || 1;
+    return setModal({
+      title: c ? "Editar material o gasto" : "Añadir material o gasto",
+      action: c ? "cost-update" : "cost",
+      fixed: c ? { id: c.id } : undefined,
       fields: [
-        jobField(),
+        ...(c ? [] : [jobField()]),
         select(
           "type",
           "Tipo",
@@ -790,22 +805,45 @@ export function Dashboard({
               ]
             : ["Materiales"]
           ).map((x) => ({ value: x, label: x })),
+          c?.type,
         ),
-        field("description", "Descripción"),
+        field("description", "Descripción", "text", c?.description),
+        field("quantity", "Cantidad", "number", String(qty)),
+        field("unit", "Unidad (ud, m, h…)", "text", c?.unit ?? "ud", false),
         {
-          ...field("amount", "Coste neto (€)", "number"),
+          ...field("price", "Coste por unidad (€, sin IVA)", "number", c ? String(Number((Number(c.amount) / qty).toFixed(4))) : ""),
           hint: "Importe sin IVA recuperable. Si proviene de un documento, regístralo en la revisión para evitar duplicarlo.",
         },
+        field("notes", "Nota", "textarea", c?.notes ?? "", false),
       ],
     });
-  const createHours = () =>
+  };
+  const deleteCost = (c: Cost) =>
+    confirmThen(
+      "¿Eliminar esta línea?",
+      `«${c.description}» saldrá de los costes del trabajo.${c.stockMovementId ? " El material vuelve al almacén." : ""}`,
+      "Sí, eliminar",
+      async () => {
+        await request("/api/operations/cost-delete", { id: c.id });
+        await load();
+        setToast("Línea eliminada.");
+      },
+    );
+  const deleteHours = (h: HoursEntry) =>
+    confirmThen("¿Eliminar estas horas?", `${number(h.hours)} h de ${h.activity} del ${fmtDate(h.date)}. No se puede deshacer.`, "Sí, eliminar", async () => {
+      await request("/api/operations/hours-delete", { id: h.id });
+      await load();
+      setToast("Horas eliminadas.");
+    });
+  const createHours = (h?: HoursEntry) =>
     setModal({
-      title: "Registrar horas",
-      action: "hours",
-      photos: true,
+      title: h ? "Editar horas" : "Registrar horas",
+      action: h ? "hours-update" : "hours",
+      fixed: h ? { id: h.id } : undefined,
+      photos: !h,
       fields: [
-        { ...jobField(), locked: !!selected?.id, addNew: { label: "+ Agregar nuevo trabajo", open: createJob } },
-        { ...select("workerId", "Técnico", options(s.workers), s.user.workerId ?? undefined), picker: "worker" as const },
+        { ...jobField(), locked: !!selected?.id, addNew: h ? undefined : { label: "+ Agregar nuevo trabajo", open: createJob } },
+        { ...select("workerId", "Técnico", options(s.workers), h?.worker?.id ?? s.user.workerId ?? undefined), picker: "worker" as const },
         select(
           "activity",
           "Actividad",
@@ -818,15 +856,16 @@ export function Dashboard({
             "Preparación",
             "Otras",
           ].map((x) => ({ value: x, label: x })),
+          h?.activity,
         ),
-        field("date", "Fecha", "date", today()),
-        field("startTime", "Desde", "time", "08:00"),
-        field("endTime", "Hasta", "time"),
+        field("date", "Fecha", "date", h?.date.slice(0, 10) ?? today()),
+        field("startTime", "Desde", "time", h?.startTime || "08:00"),
+        field("endTime", "Hasta", "time", h?.endTime || undefined),
         select("billable", "¿Son horas facturables?", [
           { value: "true", label: "Sí" },
           { value: "false", label: "No" },
-        ]),
-        field("notes", "Observaciones", "textarea", "", false),
+        ], h ? String(h.billable !== false) : undefined),
+        field("notes", "Observaciones", "textarea", h?.notes ?? "", false),
       ],
     });
   const openInvoice = () => router.push(selected?.id ? `/nueva-factura/${selected.id}` : "/nueva-factura");
@@ -1520,7 +1559,7 @@ export function Dashboard({
           );
         return (
           <div className="jd-actions">
-            <Button className="jd-btn" onClick={createHours}><Clock size={18} /><span>Registrar horas</span></Button>
+            <Button className="jd-btn" onClick={() => createHours()}><Clock size={18} /><span>Registrar horas</span></Button>
             <Button className="jd-btn" variant="outline" onClick={() => setMaterial(true)}><Package size={18} /><span>Añadir material</span></Button>
             <Button className="jd-btn jd-finish" variant="outline" loading={statusBusy} onClick={() => setConfirmFinish(true)}>{!statusBusy && <Check size={18} />}<span>{statusBusy ? "Finalizando…" : "Marcar finalizado"}</span></Button>
             <Dialog open={confirmFinish} onOpenChange={(v) => !statusBusy && setConfirmFinish(v)} title="¿Marcar como finalizado?">
@@ -1621,6 +1660,8 @@ export function Dashboard({
                             {c.description}
                             <small>
                               {c.type}
+                              {c.quantity && Number(c.quantity) > 0 && ` · ${number(c.quantity)} ${c.unit ?? ""} × ${euro(Number(c.amount) / Number(c.quantity))}`}
+                              {c.notes && ` · ${c.notes}`}
                               {c.documentId && (
                                 <>
                                   {" "}·{" "}
@@ -1629,7 +1670,15 @@ export function Dashboard({
                               )}
                             </small>
                           </div>
-                          <strong>{euro(c.amount)}</strong>
+                          <div className="ib-row">
+                            <strong>{euro(c.amount)}</strong>
+                            {!j.archivedAt && (
+                              <>
+                                <button className="ib" title="Editar" aria-label={`Editar ${c.description}`} onClick={() => createCost(c)}><Pencil size={16} /></button>
+                                <button className="ib danger" title="Eliminar" aria-label={`Eliminar ${c.description}`} onClick={() => deleteCost(c)}><Trash2 size={16} /></button>
+                              </>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1656,12 +1705,20 @@ export function Dashboard({
                             {h.notes && ` · ${h.notes}`}
                           </small>
                         </div>
-                        <strong>{number(h.hours)} h</strong>
+                        <div className="ib-row">
+                          <strong>{number(h.hours)} h</strong>
+                          {!j.archivedAt && (isAdmin || h.worker?.id === s.user.workerId) && (
+                            <>
+                              <button className="ib" title="Editar" aria-label="Editar horas" onClick={() => createHours(h)}><Pencil size={16} /></button>
+                              <button className="ib danger" title="Eliminar" aria-label="Eliminar horas" onClick={() => deleteHours(h)}><Trash2 size={16} /></button>
+                            </>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <Empty title="Aún no hay horas" description="Registra el tiempo que has dedicado a este trabajo." action={!j.archivedAt ? <Button variant="outline" onClick={createHours}>Registrar horas</Button> : undefined} />
+                  <Empty title="Aún no hay horas" description="Registra el tiempo que has dedicado a este trabajo." action={!j.archivedAt ? <Button variant="outline" onClick={() => createHours()}>Registrar horas</Button> : undefined} />
                 )}
               </Panel>
             )}
@@ -2597,7 +2654,23 @@ export function Dashboard({
               onNewCustomer={() => createContact("customer")}
             />
           )}
-          {section === "facturas-venta" && isAdmin &&
+          {section === "facturas-venta" && isAdmin && pathname.split("/")[3] === "editar" ? (
+            <InvoicePage
+              key={pathname}
+              jobs={s.jobs}
+              customers={s.customers}
+              saleId={pathname.split("/")[2]}
+              sales={s.sales}
+              defaultRate={s.company.defaultHourlyRate}
+              defaultTax={s.company.defaultTax}
+              templates={s.templates}
+              refresh={load}
+              onDone={() => {
+                setToast("Factura actualizada.");
+                router.push(`/facturas-venta/${pathname.split("/")[2]}`);
+              }}
+            />
+          ) : section === "facturas-venta" && isAdmin &&
             (pathname.split("/")[2] ? (
               <InvoiceDetail
                 key={pathname}
@@ -2661,7 +2734,7 @@ export function Dashboard({
               }}
             />
           )}
-          {section === "horas" && isAdmin && <Hours jobs={s.jobs} onAdd={createHours} />}
+          {section === "horas" && isAdmin && <Hours jobs={s.jobs} onAdd={() => createHours()} />}
           {section === "pedidos" && isAdmin && (
             <PurchaseOrders suppliers={s.suppliers} />
           )}

@@ -45,6 +45,7 @@ export default function InvoicePage({
   customers,
   jobId,
   quoteId,
+  saleId,
   sales,
   defaultRate,
   defaultTax: taxProp,
@@ -57,6 +58,8 @@ export default function InvoicePage({
   customers: Customer[];
   jobId?: string;
   quoteId?: string;
+  /** Si viene, se edita esa factura en vez de crear una. */
+  saleId?: string;
   sales: Sale[];
   defaultRate?: string;
   defaultTax?: string;
@@ -68,17 +71,23 @@ export default function InvoicePage({
   defaultTax = String(Number(taxProp ?? 21));
   const isQuote = mode === "quote";
   const year = new Date().getFullYear();
-  const startJob = jobs.find((j) => j.id === jobId);
+  const editing = sales.find((x) => x.id === saleId);
+  const startJob = jobs.find((j) => j.id === (editing?.jobId ?? jobId));
+  // shortcut: la línea no guarda su IVA; al editar se usa el tipo medio de la factura.
+  const editTax = editing && Number(editing.net) > 0 ? String(Math.round((Number(editing.tax) / Number(editing.net)) * 100 * 100) / 100) : defaultTax;
+  const editNo = editing?.number.match(/^(.*)-(\d+)$/);
   const [customerId, setCustomerId] = useState(startJob?.customer.id ?? ""),
     [job, setJob] = useState(startJob?.id ?? ""),
-    [serie, setSerie] = useState(`${isQuote ? "P" : "F"}-${year}`),
-    [numero, setNumero] = useState(() => String((isQuote ? jobs.flatMap((j) => j.quotes) : sales).filter((s) => (s.date ?? "").startsWith(String(year))).length + 1).padStart(3, "0")),
-    [date, setDate] = useState(today()),
-    [dueAt, setDueAt] = useState(""),
-    [notes, setNotes] = useState(""),
-    [ret, setRet] = useState("0"),
-    [collected, setCollected] = useState("0"),
-    [lines, setLines] = useState<InvLine[]>([]),
+    [serie, setSerie] = useState(editing ? (editNo?.[1] ?? editing.number) : `${isQuote ? "P" : "F"}-${year}`),
+    [numero, setNumero] = useState(() => editing ? (editNo?.[2] ?? "1") : String((isQuote ? jobs.flatMap((j) => j.quotes) : sales).filter((s) => (s.date ?? "").startsWith(String(year))).length + 1).padStart(3, "0")),
+    [date, setDate] = useState(editing?.date.slice(0, 10) ?? today()),
+    [dueAt, setDueAt] = useState(editing?.dueAt?.slice(0, 10) ?? ""),
+    [notes, setNotes] = useState(editing?.notes ?? ""),
+    [ret, setRet] = useState(editing && Number(editing.net) > 0 ? String(Math.round((Number(editing.withholding) / Number(editing.net)) * 100 * 100) / 100) : "0"),
+    [collected, setCollected] = useState(editing?.collected ?? "0"),
+    [lines, setLines] = useState<InvLine[]>(() =>
+      (editing?.lines ?? []).map((l) => inv({ lotId: l.lotId ?? undefined, costId: l.costId ?? undefined, description: l.description, unit: l.unit, quantity: String(Number(l.quantity)), price: String(Number(l.price)), discount: String(Number(l.discount ?? 0)), tax: editTax })),
+    ),
     [picker, setPicker] = useState(false),
     [catalogPicker, setCatalogPicker] = useState(false),
     [tplName, setTplName] = useState<string | null>(null),
@@ -97,20 +106,22 @@ export default function InvoicePage({
 
   const pickCustomer = (id: string) => {
     setCustomerId(id);
-    setJob(jobs.find((j) => j.customer.id === id)?.id ?? "");
+    const first = jobs.find((j) => j.customer.id === id)?.id ?? "";
+    setJob(first);
+    if (first && !isQuote && !editing && !lines.length) void loadMaterials(first);
   };
-  const loadMaterials = async () => {
+  const loadMaterials = async (jobToLoad = job) => {
     setLoadingMat(true);
     setError("");
     try {
-      const { items } = await post(`/api/jobs/${job}/materials`);
+      const { items } = await post(`/api/jobs/${jobToLoad}/materials`);
       if (!items.length) setInfo("No hay material del trabajo pendiente de facturar.");
       else {
         setInfo("");
         setLines((cur) => {
           const next = [...cur];
           for (const it of items as Omit<Line, "key">[]) {
-            const at = next.findIndex((l) => l.lotId === it.lotId);
+            const at = next.findIndex((l) => (it.lotId ? l.lotId === it.lotId : l.costId === it.costId));
             if (at >= 0) next[at] = { ...next[at], quantity: it.quantity };
             else next.push(inv(it));
           }
@@ -136,7 +147,7 @@ export default function InvoicePage({
   };
   // Al facturar desde un trabajo se cargan sus materiales y horas. Las horas solo si aún no hay facturas: no se registra cuáles se cobraron.
   useEffect(() => {
-    if (!startJob) return;
+    if (!startJob || editing) return;
     // Facturar desde un presupuesto aprobado: se cargan sus líneas tal cual.
     const fromQuote = quoteId ? startJob.quotes.find((x) => x.id === quoteId) : undefined;
     if (fromQuote) {
@@ -175,7 +186,8 @@ export default function InvoicePage({
           lines: lines.map(({ description, unit, quantity, price, discount }) => ({ description, unit, quantity, price, discount: discount || "0" })),
         });
       else
-      await post("/api/operations/sale", {
+      await post(editing ? "/api/operations/sale-update" : "/api/operations/sale", {
+        id: editing?.id,
         jobId: job,
         number,
         description: lines.map((l) => l.description).join("; ").slice(0, 200),
@@ -186,8 +198,8 @@ export default function InvoicePage({
         withholding,
         collected,
         notes,
-        requestKey: key,
-        lines: lines.map(({ lotId, description, unit, quantity, price, discount }) => ({ lotId, description, unit, quantity, price, discount: discount || "0" })),
+        requestKey: editing ? undefined : key,
+        lines: lines.map(({ lotId, costId, description, unit, quantity, price, discount }) => ({ lotId, costId, description, unit, quantity, price, discount: discount || "0" })),
       });
       await refresh();
       onDone();
@@ -203,7 +215,7 @@ export default function InvoicePage({
       <nav className="inv-crumbs" aria-label="Ruta">
         <Link href={isQuote ? "/presupuestos" : "/facturas"}>{isQuote ? "Presupuestos" : "Facturas"}</Link>
         <ChevronRight size={14} />
-        <span>{isQuote ? "Nuevo presupuesto" : "Nueva factura"}</span>
+        <span>{isQuote ? "Nuevo presupuesto" : editing ? `Editar ${editing.number}` : "Nueva factura"}</span>
         <div className="inv-top">
           <span className="inv-pill"><Clock size={14} /> {isQuote ? "Pendiente de aprobar" : "Pendiente de cobro"}</span>
           <span className="inv-pill">Total: <b>{eur(total)}</b></span>
@@ -233,7 +245,7 @@ export default function InvoicePage({
           <div className="inv-fields">
             <label>{isQuote ? "Fecha presupuesto" : "Fecha factura"}<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
             <label>Trabajo
-              <select value={job} onChange={(e) => setJob(e.target.value)} disabled={!customerJobs.length}>
+              <select value={job} onChange={(e) => { setJob(e.target.value); if (!isQuote && !editing && !lines.length) void loadMaterials(e.target.value); }} disabled={!customerJobs.length}>
                 {!customerJobs.length && <option value="">{customerId ? "Sin trabajos" : "Elige cliente"}</option>}
                 {customerJobs.map((j) => <option key={j.id} value={j.id}>{j.number} · {j.name}</option>)}
               </select>
@@ -246,7 +258,7 @@ export default function InvoicePage({
         </div>
 
         <div className="inv-tools">
-          <Button type="button" size="sm" variant="outline" loading={loadingMat} disabled={!job} onClick={loadMaterials}>
+          <Button type="button" size="sm" variant="outline" loading={loadingMat} disabled={!job} onClick={() => loadMaterials()}>
             <Boxes size={15} /> Material del trabajo
           </Button>
           <Button type="button" size="sm" variant="outline" disabled={!job} onClick={addHours}>
