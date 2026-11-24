@@ -12,7 +12,7 @@ function credentials() {
 }
 
 /** Sube una imagen (ya reducida) a Cloudinary con firma y devuelve su URL https. */
-export async function uploadImage(bytes: Uint8Array, folder = "almacen") {
+export async function uploadImage(bytes: Uint8Array, folder = process.env.CLOUDINARY_FOLDER || "almacen") {
   const { cloud, key, secret } = credentials();
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = createHash("sha1").update(`folder=${folder}&timestamp=${timestamp}${secret}`).digest("hex");
