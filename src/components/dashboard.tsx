@@ -382,7 +382,7 @@ export function Dashboard({
     },
     {
       fallbackData: initialState,
-      revalidateOnMount: false,
+      revalidateOnMount: true,
       revalidateOnFocus: true,
       refreshInterval: 60000,
       dedupingInterval: 5000,
