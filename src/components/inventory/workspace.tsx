@@ -37,7 +37,7 @@ import type { Job } from "@/lib/workspace-types";
 import { dec, sum } from "@/lib/money";
 import { printLabels } from "@/lib/serial-print";
 import { lotIdentifier } from "@/lib/inventory-math";
-import { filterInventory, inventoryCsv, lowStock } from "@/lib/inventory-view";
+import { filterInventory, inventoryCsv, lowStock, missingData } from "@/lib/inventory-view";
 import type { SaleProduct } from "../sale-products";
 const CountForm = dynamic(() => import("./count-form"));
 const Scanner = dynamic(() => import("./scanner"), {
@@ -338,6 +338,7 @@ export default function InventoryWorkspace({
                   <MapPin size={14} />
                   {lot.location || "Ubicación pendiente"}
                 </div>
+                {missingData(lot).length > 0 && <p className="small-note">Falta: {missingData(lot).join(", ")}</p>}
               </div>
               <div className="lot-hero-quantity">
                 <strong>{n(lot.onHand)}</strong>
@@ -718,6 +719,7 @@ export default function InventoryWorkspace({
               <option value="reserved">Con reservas</option>
               <option value="empty">Agotados</option>
               <option value="unpriced">Pendientes de precio</option>
+              <option value="incomplete">Datos incompletos</option>
               <option value="low">En mínimo de material libre</option>
               {data.isAdmin && <option value="archived">Archivados</option>}
             </select>

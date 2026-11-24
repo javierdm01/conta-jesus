@@ -26,6 +26,7 @@ export async function GET(req: Request) {
         received: true,
         totalValue: true,
         salePrice: true,
+        imageUrl: true,
         document: {
           select: { number: true, supplier: { select: { name: true } } },
         },
@@ -46,11 +47,22 @@ export async function GET(req: Request) {
         ...(admin ? [l.document?.supplier?.name, l.document?.number] : []),
       ]),
     );
+    const shown = found.slice(0, 30);
+    // Sin foto propia, se usa la del catálogo con la misma referencia.
+    const refs = [...new Set(shown.filter((l) => !l.imageUrl && l.reference).map((l) => l.reference))];
+    const catalogImages = new Map<string, string>();
+    if (refs.length)
+      for (const c of await db.catalogItem.findMany({
+        where: { companyId: u.companyId, imageUrl: { not: "" }, OR: [{ reference: { in: refs } }, { supplierRef: { in: refs } }] },
+        select: { reference: true, supplierRef: true, imageUrl: true },
+      }))
+        for (const r of [c.reference, c.supplierRef]) if (r && !catalogImages.has(r)) catalogImages.set(r, c.imageUrl);
     return Response.json(
       {
-        items: found
-          .slice(0, 30)
+        items: shown
           .map((l) => ({
+            imageUrl: l.imageUrl || catalogImages.get(l.reference) || "",
+            ownImage: !!l.imageUrl,
             id: l.id,
             code: l.code,
             alias: l.alias,

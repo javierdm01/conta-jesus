@@ -1,13 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { Search, PenLine, Pencil } from "lucide-react";
+import { Search, PenLine, Pencil, Camera, Package } from "lucide-react";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
-type Item = { id: string; code: string; alias: string; description: string; reference: string; unit: string; onHand: string; brand?: string; model?: string; location?: string; unitCost?: string | null; recommendedPrice?: string | null };
-type CatalogItem = { id: string; reference: string; supplierRef: string; description: string; alias?: string; brand: string; unit: string; price: string; currentPrice: string | null };
+type Item = { id: string; code: string; alias: string; description: string; reference: string; unit: string; onHand: string; brand?: string; model?: string; location?: string; unitCost?: string | null; recommendedPrice?: string | null; imageUrl?: string; ownImage?: boolean };
+function MatThumb({ src, big }: { src?: string; big?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span className={`mat-thumb${big ? " big" : ""}`}>
+      {src && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
+      ) : (
+        <Package size={big ? 34 : 24} aria-label="Sin foto" />
+      )}
+    </span>
+  );
+}
+type CatalogItem = { id: string; reference: string; supplierRef: string; description: string; alias?: string; brand: string; unit: string; price: string; currentPrice: string | null; imageUrl?: string };
 const unitPrice = (c: CatalogItem) => (Number(c.price) > 0 ? Number(c.price) : Number(c.currentPrice ?? 0)); // tarifa o, si no hay, precio actual de Sonepar
 const fetcher = async (url: string) => {
   const r = await fetch(url);
@@ -54,6 +67,7 @@ export function MaterialPicker({
     [quantity, setQuantity] = useState("1"),
     [notes, setNotes] = useState(""),
     [busy, setBusy] = useState(false),
+    [photoBusy, setPhotoBusy] = useState(""),
     [error, setError] = useState(""),
     [key] = useState(() => crypto.randomUUID());
   useEffect(() => {
@@ -89,6 +103,22 @@ export function MaterialPicker({
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+  const uploadPhoto = async (lotId: string, file: File) => {
+    setPhotoBusy(lotId);
+    setError("");
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      const res = await fetch(`/api/lots/${lotId}/image`, { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) throw Error(body.error ?? "No se pudo subir la foto.");
+      await mutate();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPhotoBusy("");
     }
   };
   const startEdit = (p: Item) => {
@@ -169,12 +199,16 @@ export function MaterialPicker({
         </div>
       ) : item ? (
         <div className="person-list" style={{ flex: 1, overflow: "visible" }}>
-          <div className="person-card on">
-            <strong>{item.alias || item.description}</strong>
-            <small>{[item.reference && `Ref. ${item.reference}`, item.code, item.brand, item.model, item.location && `Ubicación ${item.location}`, `${item.onHand} ${item.unit} en almacén`].filter(Boolean).join(" · ")}</small>
-            {(item.unitCost || item.recommendedPrice) && (
-              <small>{[item.unitCost && `Coste ${eur(item.unitCost)}/${item.unit}`, item.recommendedPrice && `Precio de venta sugerido ${eur(item.recommendedPrice)}/${item.unit}`].filter(Boolean).join(" · ")}</small>
-            )}
+          <div className="mat-card on">
+            <MatThumb src={item.imageUrl} big />
+            <span className="mat-body">
+              <strong>{item.alias || item.description}</strong>
+              <span className="mat-meta">{[item.reference && `Ref. ${item.reference}`, item.code, item.brand, item.model, item.location && `Ubicación ${item.location}`, `${item.onHand} ${item.unit} en almacén`].filter(Boolean).join(" · ")}</span>
+              <span className="mat-line">
+                {item.recommendedPrice && <b className="mat-sale">Venta {eur(item.recommendedPrice)}/{item.unit}</b>}
+                {item.unitCost && <span className="mat-cost">Coste {eur(item.unitCost)}/{item.unit}</span>}
+              </span>
+            </span>
           </div>
           <label>Cantidad usada ({item.unit})
             <input type="number" min="0" step="any" autoFocus value={quantity} onChange={(e) => setQuantity(e.target.value)} />
@@ -201,17 +235,33 @@ export function MaterialPicker({
             {onManual && <Button type="button" variant="outline" onClick={onManual}><PenLine size={16} />A mano</Button>}
           </div>
           {searchError && <p className="error" role="alert">{searchError.message}</p>}
+          {error && <p className="error" role="alert">{error}</p>}
           <div className="person-list">
             {data?.items.map((p) => (
               <div key={p.id} className="mat-row">
-                <button type="button" className={`person-card${canEdit ? " has-edit" : ""}`} disabled={!Number(p.onHand)} onClick={() => setItem(p)}>
-                  <strong>{p.alias || p.description}</strong>
-                  <small>{[p.reference && `Ref. ${p.reference}`, p.brand, p.model, p.location && `Ubic. ${p.location}`, `${p.onHand} ${p.unit} disponibles`, p.recommendedPrice && `Venta ${eur(p.recommendedPrice)}`].filter(Boolean).join(" · ")}</small>
+                <button type="button" className={`mat-card${canEdit ? " has-edit" : ""}`} disabled={!Number(p.onHand)} onClick={() => setItem(p)}>
+                  <MatThumb src={p.imageUrl} />
+                  <span className="mat-body">
+                    <strong>{p.alias || p.description}</strong>
+                    {p.alias && <span className="mat-desc">{p.description}</span>}
+                    <span className="mat-meta">{[p.reference && `Ref. ${p.reference}`, p.brand, p.model, p.location && `Ubic. ${p.location}`].filter(Boolean).join(" · ")}</span>
+                    <span className="mat-line">
+                      {p.recommendedPrice && <b className="mat-sale">Venta {eur(p.recommendedPrice)}/{p.unit}</b>}
+                      {p.unitCost && <span className="mat-cost">Coste {eur(p.unitCost)}</span>}
+                      <span className={Number(p.onHand) > 0 ? "mat-stock" : "mat-stock none"}>{Number(p.onHand) > 0 ? `${p.onHand} ${p.unit} disponibles` : "Agotado"}</span>
+                    </span>
+                  </span>
                 </button>
                 {canEdit && (
-                  <button type="button" className="mat-edit" aria-label={`Editar ${p.alias || p.description}`} title="Editar" onClick={() => startEdit(p)}>
-                    <Pencil size={16} />
-                  </button>
+                  <div className="mat-actions">
+                    <label className="mat-edit" title={p.ownImage ? "Cambiar foto" : "Subir foto"} aria-label={`${p.ownImage ? "Cambiar" : "Subir"} foto de ${p.alias || p.description}`}>
+                      {photoBusy === p.id ? <Spinner /> : <Camera size={16} />}
+                      <input type="file" accept="image/*" hidden disabled={!!photoBusy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void uploadPhoto(p.id, f); }} />
+                    </label>
+                    <button type="button" className="mat-edit" aria-label={`Editar ${p.alias || p.description}`} title="Editar" onClick={() => startEdit(p)}>
+                      <Pencil size={16} />
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
@@ -220,9 +270,16 @@ export function MaterialPicker({
                 <p className="small-note">Del catálogo · no está en el almacén</p>
                 {catItems.map((c) => (
                   <div key={c.id} className="mat-row">
-                    <button type="button" className="person-card" onClick={() => (setCat(c), setPrice(unitPrice(c) > 0 ? String(unitPrice(c)) : ""))}>
-                      <strong>{c.alias || c.description}</strong>
-                      <small>{[c.alias && c.description, c.reference && `Ref. ${c.reference}`, c.brand, unitPrice(c) > 0 ? `${unitPrice(c).toFixed(2).replace(".", ",")} € / ${c.unit}` : "sin precio"].filter(Boolean).join(" · ")}</small>
+                    <button type="button" className="mat-card" onClick={() => (setCat(c), setPrice(unitPrice(c) > 0 ? String(unitPrice(c)) : ""))}>
+                      <MatThumb src={c.imageUrl} />
+                      <span className="mat-body">
+                        <strong>{c.alias || c.description}</strong>
+                        {c.alias && <span className="mat-desc">{c.description}</span>}
+                        <span className="mat-meta">{[c.reference && `Ref. ${c.reference}`, c.brand].filter(Boolean).join(" · ")}</span>
+                        <span className="mat-line">
+                          {unitPrice(c) > 0 ? <b className="mat-sale">{unitPrice(c).toFixed(2).replace(".", ",")} € / {c.unit}</b> : <span className="mat-cost">Sin precio</span>}
+                        </span>
+                      </span>
                     </button>
                   </div>
                 ))}

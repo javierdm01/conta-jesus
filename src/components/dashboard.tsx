@@ -1537,7 +1537,7 @@ export function Dashboard({
       })()}
       {j.archivedAt && <div className="info-banner mb-5">Trabajo retirado. Sus datos e historial se conservan; recupéralo para volver a trabajar con él.{isAdmin && <> <button className="text-button" onClick={() => void setJobArchived(j, false)}>Recuperar trabajo</button></>}</div>}
       {!j.archivedAt && (() => {
-        const finished = !!(j.finishedAt || j.status === "Finalizado");
+        const finished = !!(j.finishedAt || ["Finalizado", "Cerrado"].includes(j.status));
         // Con factura ya guardada, el trabajo queda asociado a ella: se ve en vez de volver a facturar.
         const invoice = [...j.sales].sort((a, b) => b.date.localeCompare(a.date))[0];
         const viewInvoice = () => router.push(`/facturas-venta/${invoice.id}`);
@@ -1547,6 +1547,8 @@ export function Dashboard({
             <div className="jd-actions">
               {isAdmin && (invoice ? <Button onClick={viewInvoice}>Ver factura</Button> : <Button onClick={() => openInvoice()}>Facturar trabajo</Button>)}
               {isAdmin && <Button variant="outline" loading={statusBusy} onClick={() => setStatus(j.id, "En proceso")}>{statusBusy ? "Reabriendo…" : "Reabrir trabajo"}</Button>}
+              {isAdmin && <Button variant="outline" onClick={() => setMaterial(true)}><Package size={18} /><span>Añadir material</span></Button>}
+              {isAdmin && <Button variant="outline" onClick={() => createHours()}><Clock size={18} /><span>Registrar horas</span></Button>}
               <MoreMenu>
                 <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
                 <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>

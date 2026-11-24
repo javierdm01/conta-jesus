@@ -11,6 +11,16 @@ export type InventoryFilters = {
   order: string;
   receiptId?: string | null;
 };
+/** Datos que faltan en la ficha del lote (vacío = completa). */
+export function missingData(lot: InventoryLot) {
+  return [
+    !lot.valued && "precio",
+    !lot.reference && "referencia",
+    !lot.brand && "marca",
+    !lot.family && "familia",
+    !lot.location && "ubicación",
+  ].filter((x): x is string => !!x);
+}
 export function lowStock(lot: InventoryLot) {
   return !lot.archivedAt && dec(lot.minimum).gt(0) && dec(lot.available).lte(lot.minimum);
 }
@@ -50,6 +60,7 @@ export function filterInventory(
         (filters.status === "reserved" && dec(l.reserved).gt(0)) ||
         (filters.status === "empty" && dec(l.onHand).eq(0)) ||
         (filters.status === "unpriced" && !l.valued) ||
+        (filters.status === "incomplete" && missingData(l).length > 0) ||
         (filters.status === "low" && lowStock(l))),
   );
   return result.sort((a, b) =>

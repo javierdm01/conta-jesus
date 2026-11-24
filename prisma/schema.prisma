@@ -366,6 +366,8 @@ model StockLot {
   minimum           Decimal            @default(0) @db.Decimal(14, 4)
   // Último precio de venta unitario usado (nunca por debajo de compra + 30 %); sustituye al recomendado calculado.
   salePrice         Decimal?           @db.Decimal(14, 4)
+  // Foto propia (Cloudinary); si falta se usa la del catálogo con la misma referencia.
+  imageUrl          String             @default("")
   createdAt         DateTime           @default(now())
   lines             DocumentLine[]
   movements         StockMovement[]
