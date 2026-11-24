@@ -994,13 +994,17 @@ export function Dashboard({
     try {
       await request(`/api/operations/${action}`, payload);
       await saved();
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     }
   };
   const setStatus = async (jobId: string, status: string) => {
     setStatusBusy(true);
-    try { await run("status", { jobId, status }); } finally { setStatusBusy(false); }
+    try {
+      if (await run("status", { jobId, status })) setToast(status === "En proceso" ? "Trabajo reabierto: ya puedes añadir horas y material." : "Trabajo finalizado.");
+    } finally { setStatusBusy(false); }
   };
   // Modal de «¿Estás seguro?»: el borrado se ejecuta al confirmar y los errores (p. ej. «tiene trabajos») salen en la propia pantalla.
   const confirmThen = (title: string, message: string, label: string, run: () => Promise<void>) => setAsk({ title, message, label, run });
@@ -1550,23 +1554,33 @@ export function Dashboard({
         // Con factura ya guardada, el trabajo queda asociado a ella: se ve en vez de volver a facturar.
         const invoice = [...j.sales].sort((a, b) => b.date.localeCompare(a.date))[0];
         const viewInvoice = () => router.push(`/facturas-venta/${invoice.id}`);
-        // Terminado: solo facturar (verde) y reabrir. El técnico no puede reabrir ni facturar, así que no ve nada.
+        // Rehacer la factura abre directamente su edición, con lo nuevo del trabajo ya añadido.
+        const redoInvoice = () => router.push(`/facturas-venta/${invoice.id}/editar`);
+        // Terminado: solo facturar y reabrir; las horas y el material se añaden reabriendo. El técnico solo ve el aviso.
         if (finished)
           return (
-            <div className="jd-actions">
-              {isAdmin && (invoice ? <Button onClick={viewInvoice}>Ver factura</Button> : <Button onClick={() => openInvoice()}>Facturar trabajo</Button>)}
-              {isAdmin && <Button variant="outline" loading={statusBusy} onClick={() => setStatus(j.id, "En proceso")}>{statusBusy ? "Reabriendo…" : "Reabrir trabajo"}</Button>}
-              <Button variant="outline" onClick={() => setMaterial(true)}><Package size={18} /><span>Añadir material</span></Button>
-              <Button variant="outline" onClick={() => createHours()}><Clock size={18} /><span>Registrar horas</span></Button>
-              <MoreMenu>
-                <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
-                <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
-                {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
-                {isAdmin && invoice && <button role="menuitem" onClick={() => openInvoice()}>Registrar otra factura</button>}
-                {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
-                {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
-              </MoreMenu>
-            </div>
+            <>
+              <div className="info-banner mb-3">
+                <Check size={22} />
+                <div>
+                  <strong>Trabajo finalizado</strong>
+                  {isAdmin ? "Para añadir horas o material, primero reábrelo." : "El responsable puede reabrirlo si hace falta añadir algo."}
+                </div>
+              </div>
+              <div className="jd-actions">
+                {isAdmin && (invoice ? <Button onClick={redoInvoice}>Rehacer factura</Button> : <Button onClick={() => openInvoice()}>Facturar trabajo</Button>)}
+                {isAdmin && <Button variant="outline" loading={statusBusy} onClick={() => setStatus(j.id, "En proceso")}>{statusBusy ? "Reabriendo…" : "Reabrir trabajo"}</Button>}
+                <MoreMenu>
+                  {isAdmin && invoice && <button role="menuitem" onClick={viewInvoice}>Ver factura</button>}
+                  {isAdmin && invoice && <button role="menuitem" onClick={() => openInvoice()}>Registrar otra factura</button>}
+                  <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
+                  <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
+                  {isAdmin && <button role="menuitem" onClick={createQuote}>Crear presupuesto</button>}
+                  {isAdmin && <button role="menuitem" onClick={() => editJob(j)}>Editar datos del trabajo</button>}
+                  {isAdmin && <button role="menuitem" className="mm-danger" onClick={() => void setJobArchived(j, true)}>Eliminar de la lista</button>}
+                </MoreMenu>
+              </div>
+            </>
           );
         return (
           <div className="jd-actions">
@@ -1580,6 +1594,7 @@ export function Dashboard({
                 <Button loading={statusBusy} onClick={async () => { await setStatus(j.id, "Finalizado"); setConfirmFinish(false); }}>{statusBusy ? "Finalizando…" : "Sí, finalizar"}</Button>
               </div>
             </Dialog>
+            {isAdmin && invoice && <Button className="jd-btn" variant="outline" onClick={redoInvoice}><span>Actualizar factura</span></Button>}
             <MoreMenu>
               {isAdmin && j.status === "Pendiente" && <button role="menuitem" onClick={() => run("status", { jobId: j.id, status: "En proceso" })}>Iniciar trabajo</button>}
               <Link href={`/inventario?trabajo=${j.id}`} role="menuitem">Usar material de almacén</Link>
@@ -1596,9 +1611,11 @@ export function Dashboard({
       {(() => {
         const docs = s.documents.filter((d) => d.jobId === j.id);
         const done = !!(j.finishedAt || ["Finalizado", "Facturado", "Cobrado"].includes(j.status));
+        // Terminado: horas y material solo se cambian reabriendo el trabajo.
+        const locked = !!(j.finishedAt || ["Finalizado", "Cerrado"].includes(j.status));
         const tabs = [
           { id: "costes", label: isAdmin ? "Materiales" : "Documentos", n: isAdmin ? j.costs.length : docs.length, show: true },
-          { id: "horas", label: "Horas", n: j.hours.length, show: true },
+          { id: "horas", label: "Horas", n: j.hours.length + (isAdmin ? (j.services?.length ?? 0) : 0), show: true },
           { id: "facturas", label: "Facturas", n: j.sales.length, show: isAdmin },
           { id: "docs", label: "Documentos", n: docs.length, show: isAdmin },
           { id: "resumen", label: "Resumen", n: 0, show: isAdmin && done },
@@ -1683,7 +1700,7 @@ export function Dashboard({
                           </div>
                           <div className="ib-row">
                             <strong>{euro(c.amount)}</strong>
-                            {!j.archivedAt && (
+                            {!j.archivedAt && !locked && (
                               <>
                                 <button className="ib" title="Editar" aria-label={`Editar ${c.description}`} onClick={() => createCost(c)}><Pencil size={16} /></button>
                                 <button className="ib danger" title="Eliminar" aria-label={`Eliminar ${c.description}`} onClick={() => deleteCost(c)}><Trash2 size={16} /></button>
@@ -1694,7 +1711,7 @@ export function Dashboard({
                       ))}
                     </div>
                   ) : (
-                    <Empty title="Sin materiales ni costes" description="Añade material o confirma una compra en la bandeja de documentos." action={!j.archivedAt ? <Button variant="outline" onClick={() => setMaterial(true)}>Añadir material</Button> : undefined} />
+                    <Empty title="Sin materiales ni costes" description="Añade material o confirma una compra en la bandeja de documentos." action={!j.archivedAt && !locked ? <Button variant="outline" onClick={() => setMaterial(true)}>Añadir material</Button> : undefined} />
                   )
                 ) : docs.length ? (
                   docsTable(docs)
@@ -1704,37 +1721,29 @@ export function Dashboard({
               </Panel>
             )}
             {tab === "horas" && (
-              <Panel title="Horas registradas" subtitle="El coste se conserva con la tarifa del momento del registro.">
-                {isAdmin && !!j.services?.length && (
-                  <div className="record-list" style={{ marginBottom: 12 }}>
-                    {j.services.map((x) => (
-                      <div className="record" key={x.id}>
-                        <div>
-                          {x.description}
-                          <small>{fmtDate(x.date)} · Servicio sin horas, precio cerrado</small>
-                        </div>
-                        <div className="ib-row">
-                          <strong>{euro(x.amount)}</strong>
-                          {!j.archivedAt && <button className="ib danger" title="Eliminar" aria-label={`Eliminar ${x.description}`} onClick={() => deleteService(x.id)}><Trash2 size={16} /></button>}
-                        </div>
-                      </div>
-                    ))}
+              <Panel title="Horas y servicios" subtitle="El coste de cada hora se conserva con la tarifa del momento del registro.">
+                {(j.hours.length > 0 || !!j.services?.length) && (
+                  <div className="hours-total">
+                    <strong>{number(sum(j.hours.map((h) => h.hours)).toString())} h</strong>
+                    <span>{j.hours.length} registro(s) de horas{isAdmin && !!j.services?.length ? ` · ${j.services.length} servicio(s) sin horas` : ""}</span>
                   </div>
                 )}
-                {j.hours.length ? (
+                {j.hours.length > 0 || (isAdmin && !!j.services?.length) ? (
                   <div className="record-list">
                     {j.hours.map((h) => (
                       <div className="record" key={h.id}>
                         <div>
                           {h.worker?.name ?? s.user.name} · {h.activity}
                           <small>
-                            {fmtDate(h.date)} · {h.billable === false ? "No facturable" : "Facturable"}
+                            {fmtDate(h.date)}
+                            {h.startTime && h.endTime ? ` · ${h.startTime}–${h.endTime}` : ""}
+                            {` · ${h.billable === false ? "No facturable" : "Facturable"}`}
                             {h.notes && ` · ${h.notes}`}
                           </small>
                         </div>
                         <div className="ib-row">
                           <strong>{number(h.hours)} h</strong>
-                          {!j.archivedAt && (isAdmin || h.worker?.id === s.user.workerId) && (
+                          {!j.archivedAt && !locked && (isAdmin || h.worker?.id === s.user.workerId) && (
                             <>
                               <button className="ib" title="Editar" aria-label="Editar horas" onClick={() => createHours(h)}><Pencil size={16} /></button>
                               <button className="ib danger" title="Eliminar" aria-label="Eliminar horas" onClick={() => deleteHours(h)}><Trash2 size={16} /></button>
@@ -1743,9 +1752,21 @@ export function Dashboard({
                         </div>
                       </div>
                     ))}
+                    {isAdmin && j.services?.map((x) => (
+                      <div className="record" key={x.id}>
+                        <div>
+                          {x.description}
+                          <small>{fmtDate(x.date)} · Servicio sin horas · precio cerrado</small>
+                        </div>
+                        <div className="ib-row">
+                          <strong>{euro(x.amount)}</strong>
+                          {!j.archivedAt && !locked && <button className="ib danger" title="Eliminar" aria-label={`Eliminar ${x.description}`} onClick={() => deleteService(x.id)}><Trash2 size={16} /></button>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
-                  <Empty title="Aún no hay horas" description="Registra el tiempo que has dedicado a este trabajo." action={!j.archivedAt ? <Button variant="outline" onClick={() => createHours()}>Registrar horas</Button> : undefined} />
+                  <Empty title="Aún no hay horas" description="Registra el tiempo que has dedicado a este trabajo." action={!j.archivedAt && !locked ? <Button variant="outline" onClick={() => createHours()}>Registrar horas</Button> : undefined} />
                 )}
               </Panel>
             )}
@@ -3690,29 +3711,31 @@ function UploadForm({
             </select>
           </label>
         )}
-        <details className="simple-options upload-extra">
-          <summary>Asignación y otras opciones</summary>
-          <label>
-            Tipo de documento
-            <select
-              name="kind"
-              value={type}
-              onChange={(e) => {
-                setType(e.target.value);
-                setFile(null);
-                setError("");
-              }}
-            >
-              {(isAdmin
-                ? ["PURCHASE", "DELIVERY", "PHOTO"]
-                : ["DELIVERY", "PHOTO"]
-              ).map((k) => (
-                <option key={k} value={k}>
-                  {kindLabel[k]}
-                </option>
-              ))}
-            </select>
-          </label>
+        {/* Qué es el documento: tarjetas grandes en vez de un desplegable escondido. */}
+        <input type="hidden" name="kind" value={type} />
+        {["PURCHASE", "DELIVERY", "PHOTO"].includes(type) && (
+          <div className="kind-cards" role="radiogroup" aria-label="Tipo de documento">
+            {(isAdmin ? ["PURCHASE", "DELIVERY", "PHOTO"] : ["DELIVERY", "PHOTO"]).map((k) => (
+              <button
+                type="button"
+                key={k}
+                role="radio"
+                aria-checked={type === k}
+                className={type === k ? "on" : ""}
+                onClick={() => {
+                  setType(k);
+                  setFile(null);
+                  setError("");
+                }}
+              >
+                <strong>{kindLabel[k]}</strong>
+                <small>{k === "PURCHASE" ? "Factura que te manda el proveedor" : k === "DELIVERY" ? "Lo que llega con el material" : "Una foto para el trabajo"}</small>
+              </button>
+            ))}
+          </div>
+        )}
+        <details className="simple-options upload-extra" hidden={!isAdmin}>
+          <summary>{isAdmin ? "¿De qué trabajo es? (opcional)" : "Más opciones"}</summary>
           {isAdmin && (
             <label>
               Trabajo asociado{isAdmin && " · opcional"}
@@ -3772,26 +3795,22 @@ function UploadForm({
             </button>
           )}
         </div>
-        <p className="small-note mb-4" role="status">
-          {file
-            ? `Seleccionado: ${file.name} · ${number(file.size / 1024)} KB`
-            : "JPG, PNG, WebP o PDF. Hasta 20 MB y 20 páginas. HEIC: conviértelo a JPG antes de subir."}
-        </p>
+        {file ? (
+          <div className="file-chosen" role="status">
+            <Check size={20} />
+            <span><strong>{file.name}</strong><small>{number(file.size / 1024)} KB · listo para subir</small></span>
+            <button type="button" className="text-button" onClick={() => setFile(null)}>Cambiar</button>
+          </div>
+        ) : (
+          <p className="small-note mb-4" role="status">JPG, PNG, WebP o PDF. Hasta 20 MB y 20 páginas. HEIC: conviértelo a JPG antes de subir.</p>
+        )}
         </>
         )}
-        <div className="info-banner">
-          <Clock size={24} />
-          <div>
-            <strong>
-              {type === "PHOTO"
-                ? "Guardar fotografía"
-                : "Subir → leer datos → revisar"}
-            </strong>
-            {type === "PHOTO"
-              ? "La fotografía quedará adjunta al trabajo."
-              : "Aparecerá en Pendientes de revisar cuando esté listo. El material y los costes se registran cuando revises y confirmes."}
-          </div>
-        </div>
+        <p className="small-note mb-3">
+          {type === "PHOTO"
+            ? "La fotografía quedará adjunta al trabajo."
+            : "Después de subirlo, la app lee los datos y te lo deja en «Pendientes de revisar». Hasta que lo confirmes no se registra nada."}
+        </p>
         {error && (
           <p className="error" role="alert">
             {error}

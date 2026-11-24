@@ -200,17 +200,19 @@ export async function operate(u: Actor, action: string, input: unknown) {
     const d = z
       .object({ jobId: v.id, status: z.enum(["Finalizado", "En proceso"]) })
       .parse(input);
-    await accessibleJob(u, d.jobId);
+    const current = await accessibleJob(u, d.jobId);
     if (u.role !== "ADMIN" && d.status !== "Finalizado")
       throw new AppError(
         "El técnico solo puede marcar el trabajo como finalizado.",
         403,
       );
     return serial(async (tx) => {
+      // Reabrir un trabajo terminado o facturado lo deja «Reabierto»: así se distingue de uno facturado sin terminar.
+      const reopening = d.status === "En proceso" && (current.finishedAt || (await tx.sale.count({ where: { jobId: d.jobId } })) > 0);
       const row = await tx.job.update({
         where: { id: d.jobId },
         data: {
-          status: d.status,
+          status: reopening ? "Reabierto" : d.status,
           finishedAt: d.status === "Finalizado" ? new Date() : null,
         },
       });
@@ -511,6 +513,9 @@ export async function operate(u: Actor, action: string, input: unknown) {
           dueAt: d.dueAt ? new Date(d.dueAt) : null,
         },
       });
+      // Facturar da el trabajo por terminado (si se reabrió, vuelve a quedar finalizado).
+      const job = await tx.job.findUniqueOrThrow({ where: { id: d.jobId }, select: { finishedAt: true } });
+      await tx.job.update({ where: { id: d.jobId }, data: { status: "Finalizado", finishedAt: job.finishedAt ?? new Date() } });
       await audit(tx, u, "Registrar factura de cliente", row.id);
       return row;
     });

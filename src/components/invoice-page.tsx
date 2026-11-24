@@ -1,12 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Boxes, ChevronRight, Clock, FileStack, Plus, Save, Trash2 } from "lucide-react";
+import { ChevronRight, Clock, FileStack, Plus, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cents, dec, lineNet } from "@/lib/money";
 import type { Customer, Job, Sale, State } from "@/lib/workspace-types";
 import { newLine, type Line } from "./lines-editor";
-import { MaterialPicker } from "./material-picker";
 import { CatalogPicker } from "./quote-builder";
 import { PersonPicker } from "./person-picker";
 
@@ -96,7 +95,6 @@ export default function InvoicePage({
     [lines, setLines] = useState<InvLine[]>(() =>
       (editing?.lines ?? []).map((l) => inv({ lotId: l.lotId ?? undefined, costId: l.costId ?? undefined, serviceId: l.serviceId ?? undefined, description: l.description, unit: l.unit, quantity: String(Number(l.quantity)), price: String(Number(l.price)), discount: String(Number(l.discount ?? 0)), tax: editTax })),
     ),
-    [picker, setPicker] = useState(false),
     [catalogPicker, setCatalogPicker] = useState(false),
     [tplName, setTplName] = useState<string | null>(null),
     [info, setInfo] = useState(""),
@@ -104,6 +102,7 @@ export default function InvoicePage({
     [loadingMat, setLoadingMat] = useState(false),
     [error, setError] = useState(""),
     [key] = useState(() => crypto.randomUUID());
+  const synced = useRef(false);
   const customerJobs = jobs.filter((j) => j.customer.id === customerId);
   const current = jobs.find((j) => j.id === job);
   const base = cents(lines.reduce((a, l) => a.plus(net(l)), dec(0))),
@@ -123,14 +122,15 @@ export default function InvoicePage({
     setError("");
     try {
       const { items } = await post(`/api/jobs/${jobToLoad}/materials`);
-      if (!items.length) setInfo("No hay material del trabajo pendiente de facturar.");
+      if (!items.length) setInfo(editing ? "La factura ya incluye todo lo del trabajo." : "No hay material del trabajo pendiente de facturar.");
       else {
-        setInfo("");
+        setInfo(editing ? "Se han añadido a la factura las novedades del trabajo." : "");
         setLines((cur) => {
           const next = [...cur];
           for (const it of items as Omit<Line, "key">[]) {
             const at = next.findIndex((l) => (it.lotId ? l.lotId === it.lotId : it.serviceId ? l.serviceId === it.serviceId : l.costId === it.costId));
-            if (at >= 0) next[at] = { ...next[at], quantity: it.quantity };
+            // Al rehacer una factura lo pendiente es solo lo nuevo: se suma a lo que ya tenía la línea.
+            if (at >= 0) next[at] = { ...next[at], quantity: editing ? dec(next[at].quantity || 0).plus(it.quantity).toString() : it.quantity };
             else next.push(inv(it));
           }
           return next;
@@ -143,19 +143,29 @@ export default function InvoicePage({
     }
   };
   const addHours = () => {
-    const l = hoursLine(current, [customers.find((c) => c.id === customerId)?.hourlyRate, defaultRate].find((r) => Number(r) > 0), editing?.id);
-    if (!l) return setInfo("No hay horas pendientes de facturar en el trabajo.");
+    const l = hoursLine(current, [customers.find((c) => c.id === customerId)?.hourlyRate, defaultRate].find((r) => Number(r) > 0));
+    if (!l) return;
     setLines((cur) => {
       const at = cur.findIndex((x) => x.description === HOURS_DESC);
       if (at < 0) return [...cur, l];
       const next = [...cur];
-      next[at] = { ...next[at], quantity: l.quantity };
+      // Rehaciendo una factura, las horas pendientes son solo las nuevas y se suman; en una nueva se reemplazan.
+      next[at] = { ...next[at], quantity: editing ? dec(next[at].quantity || 0).plus(l.quantity).toString() : l.quantity };
       return next;
     });
   };
   // Al facturar desde un trabajo se cargan su material y sus horas pendientes (descontando las ya facturadas).
   useEffect(() => {
-    if (!startJob || editing) return;
+    if (!startJob) return;
+    // Rehaciendo una factura se traen solo las novedades del trabajo (material, servicios y horas aún sin facturar).
+    if (editing) {
+      if (!synced.current) {
+        synced.current = true; // en desarrollo React monta dos veces y lo pendiente se sumaría doble
+        void loadMaterials();
+        addHours();
+      }
+      return;
+    }
     // Facturar desde un presupuesto aprobado: se cargan sus líneas tal cual.
     const fromQuote = quoteId ? startJob.quotes.find((x) => x.id === quoteId) : undefined;
     if (fromQuote) {
@@ -267,13 +277,6 @@ export default function InvoicePage({
         </div>
 
         <div className="inv-tools">
-          <Button type="button" size="sm" variant="outline" loading={loadingMat} disabled={!job} onClick={() => loadMaterials()}>
-            <Boxes size={15} /> Material del trabajo
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled={!job} onClick={addHours}>
-            <Clock size={15} /> Horas del trabajo
-          </Button>
-          <Button type="button" size="sm" variant="outline" disabled={!job} onClick={() => setPicker(true)}>Añadir del almacén</Button>
           <Button type="button" size="sm" variant="outline" onClick={() => setCatalogPicker(true)}>Añadir del catálogo</Button>
           {templates.length > 0 && (
             <select className="lines-select" aria-label="Aplicar plantilla" value="" onChange={(e) => {
@@ -388,22 +391,6 @@ export default function InvoicePage({
               const at = ls.findIndex((l) => l.description === description && l.price === i.price);
               return at >= 0 ? ls.map((l, n) => (n === at ? { ...l, quantity: String(Number(l.quantity || 0) + 1) } : l)) : [...ls, inv({ description, unit: i.unit, price: i.price })];
             });
-          }}
-        />
-      )}
-      {picker && (
-        <MaterialPicker
-          jobs={jobs}
-          jobId={job}
-          close={() => setPicker(false)}
-          onManual={() => {
-            setPicker(false);
-            setLines((ls) => [...ls, inv()]);
-          }}
-          saved={async () => {
-            setPicker(false);
-            await refresh();
-            await loadMaterials();
           }}
         />
       )}

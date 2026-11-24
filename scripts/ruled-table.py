@@ -275,6 +275,9 @@ def read_cell(gray, box, column, fast=False):
     return best_read(crop, None, 'spa+eng', fast)[0]
 
 
+CODE = re.compile(r'^[A-Z0-9][A-Z0-9._/-]*(?: [A-Z0-9._/-]+)?$')
+
+
 NICE_DISCOUNTS = [Decimal(x) for x in range(0, 71, 5)]
 
 
@@ -324,11 +327,15 @@ def row_options(cands, limit=6):
     return found[:limit]
 
 
-def read_row(gray, thin, band, rules, fast=False):
+def read_row(gray, thin, band, rules, fast=False, own=None):
     """Lee una fila (celda a celda). Devuelve celdas, valores elegidos, cómo se validó ('ok', 'repaired:<celda>' o '') y alternativas."""
     yc = (band[0] + band[1]) / 2
     edges = [x_at(r, yc) for r in rules]
-    boxes = {c: (edges[i], band[0], edges[i + 1], band[1]) for i, c in enumerate(COLUMNS)}
+    # La foto puede ir inclinada: el texto de la izquierda queda más abajo (o arriba) que las cifras de la derecha.
+    # Cada columna de texto usa su propia franja; si no se encuentra, la de las cifras desplazada lo que suele desplazarse.
+    own = own or {}
+    boxes = {c: (edges[i], *(own.get(c) or band), edges[i + 1]) for i, c in enumerate(COLUMNS)}
+    boxes = {c: (b[0], b[1], b[3], b[2]) for c, b in boxes.items()}
     cells, raws = {}, {}
     for c in COLUMNS:
         if c in NUMERIC:
@@ -338,12 +345,18 @@ def read_row(gray, thin, band, rules, fast=False):
             raws[c] = (reads(crop, c, fast or c in ('raee', 'dto2'))) if crop.size else []
             cells[c] = vote(raws[c])
         elif c == 'code':
-            # el código empieza pegado a la regla: máscara fina y sin recortar su primera cifra
+            # El código empieza pegado a la regla izquierda: máscara fina y varias lecturas; gana la de más confianza.
             x0, y0, x1, y1 = [int(v) for v in boxes[c]]
-            crop = thin[max(0, y0 - 2):y1 + 3, max(0, x0 + 3):max(x0 + 4, x1 - 3)]
-            text, conf = best_read(crop, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._/', 'eng', fast) if crop.size else ('', 0.0)
-            text = text.replace(' ', '')
-            cells[c] = text if conf >= 70 and re.match(r'^[A-Z0-9][A-Z0-9._/-]{3,14}$', text) and re.search(r'\d', text) else ''
+            best = ('', 0.0)
+            for src, dx in ((thin, 2), (thin, 4), (gray, 3)):
+                crop = src[max(0, y0 - 3):y1 + 4, max(0, x0 + dx):max(x0 + dx + 1, x1 - 3)]
+                if not crop.size:
+                    continue
+                text, conf = tess_conf(crop, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._/ ', 'eng', 4)
+                text = ' '.join(text.split())
+                if CODE.match(text) and re.search(r'\d', text) and conf > best[1]:
+                    best = (text, conf)
+            cells[c] = best[0] if best[1] >= 60 else ''
         else:
             cells[c] = read_cell(gray, boxes[c], c, fast)
     cands = {c: candidates(raws[c], c) for c in NUMERIC}
@@ -363,6 +376,35 @@ def read_row(gray, thin, band, rules, fast=False):
     return cells, values, how, alts
 
 
+def column_offsets(num_bands, column_bands):
+    """Desplazamiento vertical típico de cada columna de texto respecto a las cifras (foto inclinada): el que mejor casa las filas."""
+    center = lambda b: (b[0] + b[1]) / 2
+    out = {}
+    for name, bands in column_bands.items():
+        if not bands or not num_bands:
+            out[name] = 0.0
+            continue
+        # Solo cuentan las filas de cifras que quedan dentro del bloque de esa columna (no el pie de la hoja).
+        lo, hi = min(center(b) for b in bands) - 60, max(center(b) for b in bands) + 60
+        rows = [n for n in num_bands if lo <= center(n) <= hi] or num_bands
+        out[name] = min(range(-45, 46), key=lambda o: (sum(min(abs(center(b) - (center(n) + o)) for b in bands) for n in rows), abs(o)))
+    return out
+
+
+def aligned(band, column_bands, offsets):
+    """Franja de cada columna de texto para la fila de cifras `band`: la que cae en su sitio tras el desplazamiento típico, o la de las cifras desplazada."""
+    center = lambda b: (b[0] + b[1]) / 2
+    out = {}
+    for name, bands in column_bands.items():
+        target = center(band) + offsets[name]
+        near = min(bands, key=lambda b: abs(center(b) - target), default=None)
+        if near is not None and abs(center(near) - target) <= 12:
+            out[name] = (near[0], near[1])
+        else:
+            out[name] = (band[0] + int(offsets[name]), band[1] + int(offsets[name]))
+    return out
+
+
 def main():
     image = cv2.imread(sys.argv[1], cv2.IMREAD_GRAYSCALE)
     if image is None:
@@ -380,11 +422,18 @@ def main():
     thin = clean_gray(image, rules, 5)
     num_bands = [b for b in text_bands(ink, rules, top, bottom, 3, 9) if b[0] > top + h * .012]  # sin la cabecera
     desc_bands = text_bands(ink, rules, top, bottom, 2, 3)
+    column_bands = {
+        'code': [b for b in text_bands(ink, rules, top, bottom, 0, 1) if b[0] > top + h * .012],
+        'brand': [b for b in text_bands(ink, rules, top, bottom, 1, 2) if b[0] > top + h * .012],
+        'description': [b for b in desc_bands if b[0] > top + h * .012],
+    }
+    offsets = column_offsets(num_bands, column_bands)
+    own_bands = [aligned(band, column_bands, offsets) for band in num_bands]
     rows, notes = [], []
     fast = len(num_bands) > 14
     # Las filas son independientes: se leen a la vez (cada lectura es un proceso de Tesseract).
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda band: read_row(clean, thin, band, rules, fast), num_bands))
+        results = list(pool.map(lambda pair: read_row(clean, thin, pair[0], rules, fast, pair[1]), zip(num_bands, own_bands)))
     for band, (cells, values, how, alts) in zip(num_bands, results):
         if sum(1 for c in NUMERIC if re.search(r'\d', cells[c] or '')) < 3 or re.search(r'rogamos|importante|portes|oferta por si', cells['description'], re.I):
             continue

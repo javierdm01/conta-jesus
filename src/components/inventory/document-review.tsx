@@ -286,6 +286,11 @@ export default function StockDocumentReview({
           }
         }}
       >
+        <ol className="flow-steps" aria-label="Pasos">
+          <li><b>1</b> Mira el documento original y comprueba los datos</li>
+          <li><b>2</b> Revisa cada artículo</li>
+          <li><b>3</b> Marca «He revisado» y guarda</li>
+        </ol>
         <div className="review-split">
       <div className="review-original">
         <DocumentViewer
@@ -855,7 +860,7 @@ export default function StockDocumentReview({
             disabled={busy}
             onClick={close}
           >
-            Revisar más tarde
+            Volver · revisar más tarde
           </Button>
           <details className="simple-options review-retry">
             <summary>Corregir la lectura automática</summary>

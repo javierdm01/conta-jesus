@@ -8,6 +8,23 @@ import { gridFrom, gridIdentity, gridLines, repairByBase } from "./ocr-grid";
 const KNOWN_SUPPLIERS = [
   { test: /suministros\s+y\s+transportes\s+inra|\bgrupo\s+unase\b/i, name: "SUMINISTROS Y TRANSPORTES INRA, S.L.", taxId: "B13555594", phone: "926709364" },
 ];
+// Marcas habituales del material eléctrico: una marca leída con una letra de más o de menos se corrige a la conocida.
+const KNOWN_BRANDS = ["CHINT", "EFAPEL", "SOFAMEL", "NOVOVENT", "SIMON", "LEGRAND", "SCHNEIDER", "HAGER", "NIESSEN", "TELEVES", "PRYSMIAN", "GEWISS", "FAMATEL", "SOLERA", "UNEX", "PLASTICOS", "ORBIS", "FERMAX", "GENERAL", "CIRCUTOR", "DIGITAL", "ARNOCANALI"];
+function snapBrand(brand: string | undefined) {
+  const b = (brand ?? "").toUpperCase();
+  if (b.length < 5 || KNOWN_BRANDS.includes(b)) return brand;
+  const close = KNOWN_BRANDS.filter((k) => Math.abs(k.length - b.length) <= 1 && k[0] === b[0] && editDistance(k, b) === 1);
+  return close.length === 1 ? close[0] : brand;
+}
+function editDistance(a: string, b: string) {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
 export type OcrSuggestion = {
   number?: string;
   date?: string;
@@ -287,7 +304,7 @@ export function parseOcr(
   // Tablas de resumen "Base | % IVA | Cuota": solo se aceptan si base × tipo = cuota.
   if (!result.net || !result.tax) {
     const triples: { base: string; rate: number; quota: string }[] = [];
-    for (const row of clean.split(/\r?\n/)) {
+    for (const row of clean.replace(/\|/g, " ").split(/\r?\n/)) {
       const t = row.match(
         /(\d[\d.,]*)\s*(?:€)?\s+(4|10|21)(?:[.,]0+)?\s*%?\s+(\d[\d.,]*)/,
       );
@@ -434,11 +451,13 @@ export function parseOcr(
     return "other";
   };
   let columns: string[] | undefined;
-  let invoiceTable = false,
-    tableDiscounts = 0,
+  // La cabecera de INRA es una banda gris con letras blancas que el OCR no lee: su maquetación es fija
+  // (Código · Marca · Descripción · T. RAEE · Cantidad · Precio · Dto · Dto · Importe), así que se da por conocida.
+  let invoiceTable = isInra,
+    tableDiscounts = isInra ? 2 : 0,
     unpricedTable = false,
-    raeeColumn = false,
-    brandColumn = false;
+    raeeColumn = isInra,
+    brandColumn = isInra;
   let activeLine: number | undefined;
   // Solo reconocer filas con cantidad, unidad, precio, descuento e importe explícitos.
   // No se infieren longitudes, tamaños de paquete, referencias ni precios omitidos.
@@ -494,7 +513,7 @@ export function parseOcr(
     if (/base\s*imponible|imp\.?\s*bruto|forma de pago|vencimientos|PRODUCTOR|INFORMACI[OÓ]N DE ENTREGA/i.test(row))
       invoiceTable = false;
     if (invoiceTable) {
-      const plain = row.replace(/[|{}'’]/g, " ").replace(/€/g, " ").replace(/(\d)\s+([.,]\d+)/g,"$1$2");
+      const plain = row.replace(/[|{}\]'’]/g, " ").replace(/€/g, " ").replace(/(\d)\s+([.,]\d+)/g,"$1$2");
       if (unpricedTable) {
         const hit=plain.match(/^\s*([A-Z0-9][A-Z0-9._/-]{3,24})\s+(.+?)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)\s*$/);
         if(hit) activeLine=undefined;
@@ -551,7 +570,7 @@ export function parseOcr(
           ? prefix.match(/^([A-Z0-9][A-Z0-9._/-]*(?: \d[A-Z0-9._/-]*)?)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9&.-]{2,19})\s+(\S.{2,})$/)
           : null;
         if (inraRow && /\d/.test(inraRow[1])) {
-          reference = inraRow[1].replace(/\s/g, "");
+          reference = inraRow[1];
           brand = inraRow[2];
           prefix = inraRow[3];
         } else if (brandColumn) {
@@ -714,9 +733,26 @@ export function parseOcr(
       family: productFamily(m[1]),
     });
   }
+  const textLines = result.lines;
   if (grid) {
     let g = gridLines(grid, raeeAmount && result.net ? cents(dec(result.net).minus(raeeAmount)) : result.net);
     if (raeeAmount && !g.matched) g = gridLines(grid, result.net);
+    // Una cifra de la rejilla mal leída deja la fila sin precio, pero la lectura de línea completa suele tenerla bien:
+    // se toma de ahí (misma cantidad y una palabra larga en común) solo si esa línea concilia por sí sola.
+    const words = (d: string) => d.toUpperCase().split(/[^A-Z0-9]+/).filter((w) => w.length >= 4);
+    const used = new Set<number>();
+    const filled = g.lines.map((l) => {
+      if (l.price !== "") return l;
+      const at = textLines.findIndex((t, i) => !used.has(i) && dec(t.quantity).eq(l.quantity) && words(t.description).some((w) => words(l.description).includes(w)));
+      if (at < 0) return l;
+      used.add(at);
+      const t = textLines[at];
+      g.warnings = g.warnings.filter((w) => w !== `Importes sin conciliar: ${l.description}`);
+      return { ...l, price: t.price, discount: t.discount, observedUnitPrice: undefined };
+    });
+    g = { ...g, lines: filled };
+    const billed = raeeAmount && result.net ? cents(dec(result.net).minus(raeeAmount)) : result.net;
+    if (!g.matched && billed && g.lines.length && g.lines.every((l) => l.price !== "") && sum(g.lines.map((l) => documentLineNet(l.quantity, l.price, l.discount))).eq(billed)) g = { ...g, matched: true };
     if (g.lines.length) {
       result.lines = g.lines.map((l) => ({ ...l, family: productFamily(l.description) }));
       result.warnings.push(
@@ -731,7 +767,7 @@ export function parseOcr(
     const letters = (n: string) => (n.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g)?.length ?? 0) / Math.max(1, n.replace(/\s/g, "").length);
     for (const note of grid.notes
       .map((n) => n.replace(/\s+/g, " ").trim())
-      .filter((n) => n.length >= 8 && letters(n) >= 0.75 && !/rogamos|oferta por si|importante|portes|dto\.?\s*p\.?p|raee|base imponible/i.test(n)))
+      .filter((n) => n.length >= 8 && letters(n) >= 0.75 && /(?:[A-Za-zÁÉÍÓÚÑáéíóúñ]{4,}\s+){1,}[A-Za-zÁÉÍÓÚÑáéíóúñ]{3,}/.test(n) && !/rogamos|oferta por si|importante|portes|dto\.?\s*p\.?p|raee|base imponible/i.test(n)))
       result.warnings.push(`Nota del proveedor en el documento: ${note}`);
     if (grid.rows.some((r) => Number(r.values.raee) > 0))
       result.warnings.push("Alguna línea lleva tasa RAEE: comprueba si el importe de la línea la incluye.");
@@ -774,6 +810,11 @@ export function parseOcr(
     result.warnings.push(
       "Las líneas reconocidas no suman la base neta: puede faltar material, portes o descuentos. Revisa todas las páginas.",
     );
+  for (const l of result.lines) if (l.brand) l.brand = snapBrand(l.brand);
+  // Con la rejilla conciliada, los avisos de la primera lectura de líneas ya no tienen sentido; y ningún aviso va repetido.
+  if (grid && !result.warnings.some((w) => w.includes("no se ha podido comprobar que sumen")))
+    result.warnings = result.warnings.filter((w) => !w.startsWith("Importes sin conciliar") && !w.startsWith("Las líneas reconocidas no suman"));
+  result.warnings = [...new Set(result.warnings)];
   if (!text.trim())
     result.warnings.push(
       "El documento no contiene texto legible. Comprueba la imagen o introduce los datos manualmente.",

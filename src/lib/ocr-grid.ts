@@ -64,8 +64,9 @@ export function gridLines(grid: Grid, net?: string) {
   const warnings: string[] = [];
   const lines = grid.rows.flatMap((row, i) => {
     const description = clean([row.cells.description ?? "", ...row.extra].join(" "));
-    const code = (row.cells.code ?? "").replace(/\s/g, "");
-    const reference = /^[A-Z0-9][A-Z0-9._/-]{3,24}$/.test(code) && /\d/.test(code) ? code : "";
+    // El código impreso puede llevar un espacio («10040 CBR», «MUTE 100T»): se conserva tal cual.
+    const code = (row.cells.code ?? "").replace(/\s+/g, " ").trim();
+    const reference = /^[A-Z0-9][A-Z0-9._/-]*(?: [A-Z0-9._/-]+)?$/.test(code) && code.replace(/ /g, "").length >= 4 && /\d/.test(code) ? code : "";
     const brand = clean(row.cells.brand ?? "").replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, "");
     if (description.length < 3 || /rogamos|importante|oferta por si|portes/i.test(description)) return [];
     const p = picks[i];

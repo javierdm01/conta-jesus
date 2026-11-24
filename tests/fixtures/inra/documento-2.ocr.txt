@@ -1,0 +1,25 @@
+SUMINISTROS Y TRANSPORTES INRA, S.L.  mas mas  OA
+JESUS DIAZ DUEÑAS
+IN  Avda Antonio Huertas, 141 1° B Esc, 1
+137(.0 - Tomciloso (Ciudad Real)  CL. SANCHEZ ROBLEDO ,  9
+CIF: B13555594  45740  LOS YEBENES
+RA  Toledo
+CENTRAL  Ctra. Argamasilla Km. 1,900
+13700 - Tomelloso (Ciudad Real)  al  a
+Tíno. 926709364  Fax 926709365
+a
+DELEGACION  Avenida Isaac Peral, 2
+13005 - Ciudad Real
+4  Grupo
+Unase  Pagina o  1 de 1
+E
+0)  fe  AD  a  O  i  A  A
+6109793  00  01389  20/11/2026
+BH8-1N-10C4 | CHINT  INTERRUPTOR AUT.NBH8 1P+N 1M 10A C-4,5kA  0,0  1,00  5,845]  0,00}  0,00}  5,85
+UTE 100T  NOVOVENT |  Extractor doméstico MUTE 100T  0,50]  1,00  29,072]  0,0  0,00)  29,07
+¡Importante! Rogamos revisen oferta por si varía modelo o cantidad, según lo indicado
+Portes:  0,00  % Dto. P.P.: 0,00  Importe P.P.:  0,00  Importe RAEE:  0,50
+Base imponible  % IVA |  Importe IVA  | % R.E.  Importe R.E.
+35,42  |  21,00  7,44  TOTAL OFERTA VENTA
+42,86  eur
+[GRID] {"found":true,"identity":"11 20/ 11/2020","rows":[{"cells":{"code":"NBH8-1N-10C4","brand":"CHINT","description":"INTERRUPTOR AUT.NBH8 1P+N 1M 10A C-4,5kA","raee":"0,0","quantity":"1,00","price":"0,846","dto1":"0,0","dto2":"0,0","total":"2,60"},"how":"","values":{"raee":"0.00","quantity":"1","price":"0.840","dto1":"0","dto2":"0","total":"2.60"},"band":[726,751],"extra":[],"alternatives":[]},{"cells":{"code":"MUTE 100T","brand":"NOVOVENT","description":"Extractor doméstico MUTE 100T","raee":"0,5","quantity":"1,00","price":"29,072","dto1":"0,0","dto2":"0,0","total":"29,07"},"how":"ok","values":{"raee":"0.00","quantity":"1","price":"29.072","dto1":"0","dto2":"0","total":"29.07"},"band":[759,784],"extra":[],"alternatives":[{"quantity":"1","price":"29.072","dto1":"0","dto2":"0","total":"29.07"},{"quantity":"1","price":"29.070","dto1":"0","dto2":"0","total":"29.07"}]}],"notes":[],"top":625,"bottom":1918}
