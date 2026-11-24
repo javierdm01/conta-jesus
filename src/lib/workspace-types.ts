@@ -77,7 +77,7 @@ export type Sale = {
   customerId?: string;
   customerName?: string;
   customerEmail?: string;
-  lines?: {id:string;lotId?:string|null;costId?:string|null;description:string;unit:string;quantity:string;price:string;discount?:string;net:string}[];
+  lines?: {id:string;lotId?:string|null;costId?:string|null;serviceId?:string|null;description:string;unit:string;quantity:string;price:string;discount?:string;net:string}[];
 };
 export type Metrics = {
   net: string;
@@ -106,6 +106,7 @@ export type Job = {
   plannedAt?: string;
   hours: Hours[];
   costs: Cost[];
+  services?: { id: string; description: string; amount: string; date: string }[];
   sales: Sale[];
   quotes: Quote[];
   metrics?: Metrics;

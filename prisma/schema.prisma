@@ -194,6 +194,7 @@ model Job {
   documents      Document[]
   stockMovements StockMovement[]
   reservations   StockReservation[]
+  services       JobService[]
 
   @@unique([companyId, number])
   @@index([companyId, workerId])
@@ -453,6 +454,20 @@ model TimeEntry {
   requestKey String   @unique
 }
 
+// Servicio a precio cerrado (sin horas): se factura con su descripción y su importe.
+model JobService {
+  id          String   @id @default(cuid())
+  companyId   String
+  jobId       String
+  job         Job      @relation(fields: [jobId], references: [id])
+  description String
+  amount      Decimal  @db.Decimal(14, 2)
+  date        DateTime
+  requestKey  String   @unique
+
+  @@index([jobId])
+}
+
 model Sale {
   id          String    @id @default(cuid())
   companyId   String
@@ -495,6 +510,8 @@ model SaleLine {
   lot         StockLot? @relation(fields: [lotId], references: [id], onDelete: SetNull)
   // Coste de material manual (sin almacén) que esta línea factura; evita facturarlo dos veces.
   costId      String?
+  // Servicio sin horas que esta línea factura; evita facturarlo dos veces.
+  serviceId   String?
   description String
   unit        String
   quantity    Decimal @db.Decimal(14, 4)

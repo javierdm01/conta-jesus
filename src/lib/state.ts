@@ -106,6 +106,7 @@ export async function getState(u: Actor) {
         costs: { where: { reversed: false } },
         hours: { include: { worker: { select: { id: true, name: true } } } },
         sales: { include: { lines: true } },
+        services: { orderBy: { date: "desc" } },
         quotes: { orderBy: { createdAt: "desc" } },
         stockMovements: {
           where: { kind: "USE", amount: null },

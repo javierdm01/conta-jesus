@@ -12,14 +12,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     await accessibleJob(u, id);
     const company = await db.company.findUniqueOrThrow({ where: { id: u.companyId }, select: { defaultMargin: true } });
     const markup = dec(1).plus(dec(company.defaultMargin.toString()).div(100));
-    const [moves, billed, manual] = await Promise.all([
+    const [moves, billed, manual, services] = await Promise.all([
       db.stockMovement.findMany({
         where: { companyId: u.companyId, jobId: id, kind: { in: ["USE", "RETURN"] } },
         include: { lot: { select: { id: true, alias: true, description: true, unit: true, reference: true, salePrice: true } } },
       }),
-      db.saleLine.findMany({ where: { sale: { jobId: id, companyId: u.companyId }, OR: [{ lotId: { not: null } }, { costId: { not: null } }] } }),
+      db.saleLine.findMany({ where: { sale: { jobId: id, companyId: u.companyId }, OR: [{ lotId: { not: null } }, { costId: { not: null } }, { serviceId: { not: null } }] } }),
       // Material apuntado a mano (sin almacén): se factura entero una sola vez.
       db.cost.findMany({ where: { companyId: u.companyId, jobId: id, type: "Materiales", reversed: false, stockMovementId: null } }),
+      db.jobService.findMany({ where: { companyId: u.companyId, jobId: id }, orderBy: { date: "asc" } }),
     ]);
     const byLot = new Map<string, { lot: (typeof moves)[number]["lot"]; qty: ReturnType<typeof dec>; cost: ReturnType<typeof dec> }>();
     for (const m of moves) {
@@ -29,7 +30,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       cur.cost = cur.cost.plus(dec(m.amount?.toString() ?? 0).mul(sign));
       byLot.set(m.lotId, cur);
     }
-    type Item = { lotId?: string; costId?: string; description: string; reference: string; unit: string; quantity: string; price: string };
+    type Item = { lotId?: string; costId?: string; serviceId?: string; description: string; reference: string; unit: string; quantity: string; price: string };
     const items: Item[] = [...byLot.entries()].flatMap(([lotId, x]): Item[] => {
       const done = sum(billed.filter((b) => b.lotId === lotId).map((b) => b.quantity.toString()));
       const pending = x.qty.minus(done);
@@ -61,7 +62,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         price: cents(dec(c.amount.toString()).div(qty)), // precio puesto a mano: se factura tal cual, sin margen
       });
     }
-    return Response.json({ items }, { headers: { "Cache-Control": "no-store" } });
+    // Servicios sin horas: una línea con su descripción e importe, una sola vez.
+    const billedServices = new Set(billed.map((b) => b.serviceId));
+    for (const s of services)
+      if (!billedServices.has(s.id)) items.push({ serviceId: s.id, description: s.description, reference: "", unit: "ud", quantity: "1", price: s.amount.toString() });
+    return Response.json({ items },{ headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return apiError(e);
   }

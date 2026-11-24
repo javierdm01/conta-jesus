@@ -6,6 +6,7 @@ export type Line = {
   key: string;
   lotId?: string;
   costId?: string;
+  serviceId?: string;
   catalogId?: string;
   description: string;
   unit: string;

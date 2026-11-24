@@ -28,7 +28,7 @@ const HOURS_DESC = "Mano de obra";
 // shortcut: una línea «Instalación» a tanto alzado en «ud» cuenta como 1 h; sube a un vínculo real hora↔línea si molesta.
 const billedHours = (j?: Job, skipSaleId?: string) =>
   (j?.sales ?? []).filter((s) => s.id !== skipSaleId).flatMap((s) => s.lines ?? [])
-    .filter((l) => !l.lotId && !l.costId && (/^(h|hora|horas)$/i.test(l.unit.trim()) || /instalaci|mano de obra/i.test(l.description)))
+    .filter((l) => !l.lotId && !l.costId && !l.serviceId && (/^(h|hora|horas)$/i.test(l.unit.trim()) || /instalaci|mano de obra/i.test(l.description)))
     .reduce((a, l) => a.plus(l.quantity), dec(0));
 /** Una línea con las horas facturables aún sin cobrar del trabajo. shortcut: precio sugerido = coste medio/hora + 30 % (como el material), editable. */
 const hoursLine = (j?: Job, rate?: string, skipSaleId?: string): InvLine | null => {
@@ -94,7 +94,7 @@ export default function InvoicePage({
     [ret, setRet] = useState(editing && Number(editing.net) > 0 ? String(Math.round((Number(editing.withholding) / Number(editing.net)) * 100 * 100) / 100) : "0"),
     [collected, setCollected] = useState(editing?.collected ?? "0"),
     [lines, setLines] = useState<InvLine[]>(() =>
-      (editing?.lines ?? []).map((l) => inv({ lotId: l.lotId ?? undefined, costId: l.costId ?? undefined, description: l.description, unit: l.unit, quantity: String(Number(l.quantity)), price: String(Number(l.price)), discount: String(Number(l.discount ?? 0)), tax: editTax })),
+      (editing?.lines ?? []).map((l) => inv({ lotId: l.lotId ?? undefined, costId: l.costId ?? undefined, serviceId: l.serviceId ?? undefined, description: l.description, unit: l.unit, quantity: String(Number(l.quantity)), price: String(Number(l.price)), discount: String(Number(l.discount ?? 0)), tax: editTax })),
     ),
     [picker, setPicker] = useState(false),
     [catalogPicker, setCatalogPicker] = useState(false),
@@ -129,7 +129,7 @@ export default function InvoicePage({
         setLines((cur) => {
           const next = [...cur];
           for (const it of items as Omit<Line, "key">[]) {
-            const at = next.findIndex((l) => (it.lotId ? l.lotId === it.lotId : l.costId === it.costId));
+            const at = next.findIndex((l) => (it.lotId ? l.lotId === it.lotId : it.serviceId ? l.serviceId === it.serviceId : l.costId === it.costId));
             if (at >= 0) next[at] = { ...next[at], quantity: it.quantity };
             else next.push(inv(it));
           }
@@ -208,7 +208,7 @@ export default function InvoicePage({
         collected,
         notes,
         requestKey: editing ? undefined : key,
-        lines: lines.map(({ lotId, costId, description, unit, quantity, price, discount }) => ({ lotId, costId, description, unit, quantity, price, discount: discount || "0" })),
+        lines: lines.map(({ lotId, costId, serviceId, description, unit, quantity, price, discount }) => ({ lotId, costId, serviceId, description, unit, quantity, price, discount: discount || "0" })),
       });
       await refresh();
       onDone(saved.id);

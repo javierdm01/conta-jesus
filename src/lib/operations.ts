@@ -298,6 +298,30 @@ export async function operate(u: Actor, action: string, input: unknown) {
       return { id: row.id };
     });
   }
+  if (action === "service" || action === "service-delete") {
+    admin(u);
+    if (action === "service-delete") {
+      const { id } = z.object({ id: v.id }).parse(input);
+      const row = await db.jobService.findFirst({ where: { id, companyId } });
+      if (!row) throw new AppError("Servicio no encontrado.", 404);
+      if (await db.saleLine.count({ where: { serviceId: id } }))
+        throw new AppError("Este servicio ya está en una factura. Quítalo de la factura antes de eliminarlo.");
+      return serial(async (tx) => {
+        await tx.jobService.delete({ where: { id } });
+        await audit(tx, u, "Eliminar servicio", id);
+        return { id };
+      });
+    }
+    const d = z
+      .object({ jobId: v.id, description: v.name, amount: v.money, date: v.date, requestKey: v.requestKey })
+      .parse(input);
+    await accessibleJob(u, d.jobId);
+    return serial(async (tx) => {
+      const row = await tx.jobService.create({ data: { ...d, companyId, date: new Date(d.date) } });
+      await audit(tx, u, "Registrar servicio sin horas", row.id);
+      return { id: row.id };
+    });
+  }
   if (action === "cost" || action === "cost-update") {
     const costTypes = z.enum([
       "Materiales",
@@ -379,6 +403,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
             z.object({
               lotId: v.id.optional(),
               costId: v.id.optional(),
+              serviceId: v.id.optional(),
               description: v.name,
               unit: z.string().trim().min(1).max(12).default("ud"),
               quantity: v.quantity,
@@ -520,6 +545,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
         await tx.cost.deleteMany({ where });
         await tx.stockReservation.deleteMany({ where });
         await tx.timeEntry.deleteMany({ where });
+        await tx.jobService.deleteMany({ where });
         await tx.sale.deleteMany({ where });
         await tx.quote.deleteMany({ where });
         await tx.job.deleteMany({ where: { id: { in: jobIds } } });

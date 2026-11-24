@@ -132,6 +132,8 @@ type Field = {
   /** Primera opción del selector (sin seleccionarla): abre el alta del elemento. */
   addNew?: { label: string; open: () => void };
   picker?: "customer" | "worker";
+  /** Solo se muestra cuando otro campo del formulario tiene ese valor. */
+  when?: { name: string; is: string };
 };
 type Modal = {
   product?: SaleProduct;
@@ -843,29 +845,30 @@ export function Dashboard({
       photos: !h,
       fields: [
         { ...jobField(), locked: !!selected?.id, addNew: h ? undefined : { label: "+ Agregar nuevo trabajo", open: createJob } },
-        { ...select("workerId", "Técnico", options(s.workers), h?.worker?.id ?? s.user.workerId ?? undefined), picker: "worker" as const },
-        select(
-          "activity",
-          "Actividad",
-          [
-            "Instalación",
-            "Reparación",
-            "Diagnóstico",
-            "Mantenimiento",
-            "Desplazamiento",
-            "Preparación",
-            "Otras",
-          ].map((x) => ({ value: x, label: x })),
-          h?.activity,
-        ),
+        ...(isAdmin && !h ? [select("mode", "Tipo de registro", [{ value: "hours", label: "Horas trabajadas" }, { value: "service", label: "Servicio sin horas (precio cerrado)" }], "hours")] : []),
+        { ...field("description", "Descripción para la factura", "text", ""), when: { name: "mode", is: "service" } },
+        { ...field("amount", "Importe del servicio (€, sin IVA)", "number", ""), when: { name: "mode", is: "service" } },
+        { ...select("workerId", "Técnico", options(s.workers), h?.worker?.id ?? s.user.workerId ?? undefined), picker: "worker" as const, when: { name: "mode", is: "hours" } },
+        {
+          ...select(
+            "activity",
+            "Actividad",
+            ["Instalación", "Reparación", "Diagnóstico", "Mantenimiento", "Desplazamiento", "Preparación", "Otras"].map((x) => ({ value: x, label: x })),
+            h?.activity,
+          ),
+          when: { name: "mode", is: "hours" },
+        },
         field("date", "Fecha", "date", h?.date.slice(0, 10) ?? today()),
-        field("startTime", "Desde", "time", h?.startTime || "08:00"),
-        field("endTime", "Hasta", "time", h?.endTime || undefined),
-        select("billable", "¿Son horas facturables?", [
-          { value: "true", label: "Sí" },
-          { value: "false", label: "No" },
-        ], h ? String(h.billable !== false) : undefined),
-        field("notes", "Observaciones", "textarea", h?.notes ?? "", false),
+        { ...field("startTime", "Desde", "time", h?.startTime || "08:00"), when: { name: "mode", is: "hours" } },
+        { ...field("endTime", "Hasta", "time", h?.endTime || undefined), when: { name: "mode", is: "hours" } },
+        {
+          ...select("billable", "¿Son horas facturables?", [
+            { value: "true", label: "Sí" },
+            { value: "false", label: "No" },
+          ], h ? String(h.billable !== false) : undefined),
+          when: { name: "mode", is: "hours" },
+        },
+        { ...field("notes", "Observaciones", "textarea", h?.notes ?? "", false), when: { name: "mode", is: "hours" } },
       ],
     });
   const openInvoice = () => router.push(selected?.id ? `/nueva-factura/${selected.id}` : "/nueva-factura");
@@ -1001,6 +1004,12 @@ export function Dashboard({
   };
   // Modal de «¿Estás seguro?»: el borrado se ejecuta al confirmar y los errores (p. ej. «tiene trabajos») salen en la propia pantalla.
   const confirmThen = (title: string, message: string, label: string, run: () => Promise<void>) => setAsk({ title, message, label, run });
+  const deleteService = (id: string) =>
+    confirmThen("¿Eliminar el servicio?", "Se quitará del trabajo y dejará de proponerse al facturar.", "Sí, eliminar", async () => {
+      await request("/api/operations/service-delete", { id });
+      await load();
+      setToast("Servicio eliminado.");
+    });
   const deleteSale = async (sale: Sale) => {
     const paid = Number(sale.collected) > 0 ? ` Tiene ${euro(sale.collected)} registrados como cobrados.` : "";
     confirmThen("¿Eliminar la factura?", `La factura ${sale.number} se borrará con sus líneas y adjuntos vinculados.${paid} No se puede deshacer.`, "Sí, eliminar", async () => {
@@ -1547,8 +1556,8 @@ export function Dashboard({
             <div className="jd-actions">
               {isAdmin && (invoice ? <Button onClick={viewInvoice}>Ver factura</Button> : <Button onClick={() => openInvoice()}>Facturar trabajo</Button>)}
               {isAdmin && <Button variant="outline" loading={statusBusy} onClick={() => setStatus(j.id, "En proceso")}>{statusBusy ? "Reabriendo…" : "Reabrir trabajo"}</Button>}
-              {isAdmin && <Button variant="outline" onClick={() => setMaterial(true)}><Package size={18} /><span>Añadir material</span></Button>}
-              {isAdmin && <Button variant="outline" onClick={() => createHours()}><Clock size={18} /><span>Registrar horas</span></Button>}
+              <Button variant="outline" onClick={() => setMaterial(true)}><Package size={18} /><span>Añadir material</span></Button>
+              <Button variant="outline" onClick={() => createHours()}><Clock size={18} /><span>Registrar horas</span></Button>
               <MoreMenu>
                 <button role="menuitem" onClick={() => setUpload("DELIVERY")}>Fotografiar albarán</button>
                 <button role="menuitem" onClick={() => setUpload("PHOTO")}>Añadir fotografías</button>
@@ -1696,6 +1705,22 @@ export function Dashboard({
             )}
             {tab === "horas" && (
               <Panel title="Horas registradas" subtitle="El coste se conserva con la tarifa del momento del registro.">
+                {isAdmin && !!j.services?.length && (
+                  <div className="record-list" style={{ marginBottom: 12 }}>
+                    {j.services.map((x) => (
+                      <div className="record" key={x.id}>
+                        <div>
+                          {x.description}
+                          <small>{fmtDate(x.date)} · Servicio sin horas, precio cerrado</small>
+                        </div>
+                        <div className="ib-row">
+                          <strong>{euro(x.amount)}</strong>
+                          {!j.archivedAt && <button className="ib danger" title="Eliminar" aria-label={`Eliminar ${x.description}`} onClick={() => deleteService(x.id)}><Trash2 size={16} /></button>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {j.hours.length ? (
                   <div className="record-list">
                     {j.hours.map((h) => (
@@ -3378,7 +3403,7 @@ function OperationForm({
                 delete payload[f.name];
             if ("billable" in payload)
               payload.billable = payload.billable === "true";
-            const result = await request(`/api/operations/${modal.action}`, payload);
+            const result = await request(`/api/operations/${modal.action === "hours" && values.mode === "service" ? "service" : modal.action}`, payload);
             // Las fotos se suben ya reducidas; si alguna falla, el parte ya está guardado.
             for (const f of photos)
               await uploadDocument(f, { kind: "PHOTO", jobId: String(values.jobId ?? "") }).catch(() => {});
@@ -3412,6 +3437,7 @@ function OperationForm({
           const grid = (
         <div className="form-grid">
           {group
+            .filter((f) => !f.when || (values[f.when.name] || "hours") === f.when.is)
             .filter(
               (f) =>
                 !(
@@ -3518,7 +3544,7 @@ function OperationForm({
             <Fragment key="main">{grid}</Fragment>
           );
         })}
-        {modal.action === "hours" && (() => {
+        {modal.action === "hours" && values.mode !== "service" && (() => {
           const [h1, m1] = (values.startTime || "").split(":").map(Number),
             [h2, m2] = (values.endTime || "").split(":").map(Number),
             min = h2 * 60 + m2 - (h1 * 60 + m1);
