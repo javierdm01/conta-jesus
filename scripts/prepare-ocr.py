@@ -88,7 +88,7 @@ def page_on_dark_background(image):
     return cv2.warpPerspective(image, matrix, (width, height), borderValue=255)
 
 
-def prepare_photo(image, destination):
+def prepare_photo(image, destination, remove_lines=True):
     height, width = image.shape
     binary = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                   cv2.THRESH_BINARY_INV, 41, 15)
@@ -116,12 +116,14 @@ def prepare_photo(image, destination):
             cv2.line(mask, (x1, y1), (x2, y2), 255, thickness)
     background = cv2.GaussianBlur(image, (0, 0), 25)
     output = cv2.divide(image, background, scale=255)
-    output = cv2.inpaint(output, mask, 5, cv2.INPAINT_TELEA)
+    # Para leer se borran las reglas de la tabla; para mostrar no: el relleno emborronaba el texto pegado a ellas.
+    if remove_lines:
+        output = cv2.inpaint(output, mask, 5, cv2.INPAINT_TELEA)
     if angles:
         angle = float(np.median(angles))
         if abs(angle) > .1:
             matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
-            output = cv2.warpAffine(output, matrix, (width, height), borderValue=255)
+            output = cv2.warpAffine(output, matrix, (width, height), flags=cv2.INTER_CUBIC, borderValue=255)
     if not cv2.imwrite(destination, output):
         raise ValueError("No se pudo guardar la preparación OCR")
 
@@ -136,7 +138,7 @@ def scan_page(source, destination):
     quality = 'ok' if rectified.shape != image.shape else 'fallback'
     temporary = str(Path(destination).with_suffix('.tmp.png'))
     try:
-        prepare_photo(rectified, temporary)
+        prepare_photo(rectified, temporary, remove_lines=False)
         output = cv2.imread(temporary, cv2.IMREAD_GRAYSCALE)
     finally:
         Path(temporary).unlink(missing_ok=True)
@@ -146,7 +148,7 @@ def scan_page(source, destination):
         factor = 2500 / longest
         output = cv2.resize(output, (round(width * factor), round(height * factor)), interpolation=cv2.INTER_AREA)
         height, width = output.shape
-    if not cv2.imwrite(destination, output, [cv2.IMWRITE_JPEG_QUALITY, 85]):
+    if not cv2.imwrite(destination, output, [cv2.IMWRITE_JPEG_QUALITY, 92]):
         raise ValueError("No se pudo guardar la imagen escaneada")
     print(json.dumps({'width': width, 'height': height, 'quality': quality}))
 

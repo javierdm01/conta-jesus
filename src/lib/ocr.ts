@@ -97,6 +97,9 @@ export function parseOcr(
   const { grid, rest } = gridFrom(text);
   text = rest;
   const clean = text.replace(/[   ]/g, " ").replace(/\bSCIF\s*:/gi,"CIF:");
+  const isInra = KNOWN_SUPPLIERS.some((k) => k.test.test(clean));
+  // INRA imprime la tasa RAEE aparte («Importe RAEE»): suma a la base pero no va dentro del importe de las líneas.
+  const raeeAmount = isInra ? numeric(clean.match(/importe\s*raee\s*:?\s*(\d[\d.,]*)/i)?.[1] ?? "") : undefined;
   if (/oferta\s*(?:de\s*)?venta|presupuesto/i.test(clean))
     result.warnings.push("El documento parece una oferta o presupuesto. No acredita una entrega ni una factura: comprueba su tipo antes de registrar una recepción.");
   if (clean.includes("[OCR_DECIMAL_COLUMN]"))
@@ -542,7 +545,16 @@ export function parseOcr(
         prefix = prefix.replace(/^\*\)\s*/, "(*) ");
         // Con columna «Marca», la primera palabra en mayúsculas (tras el código) es la marca y no se toma como referencia.
         let brand = "";
-        if (brandColumn) {
+        // INRA: «Código Marca Descripción» llegan en una sola cadena. El código es lo primero (puede llevar un
+        // segundo trozo con cifras, «MUTE 100T»), la marca es la siguiente palabra en mayúsculas y el resto, la descripción.
+        const inraRow = isInra && brandColumn && !reference
+          ? prefix.match(/^([A-Z0-9][A-Z0-9._/-]*(?: \d[A-Z0-9._/-]*)?)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9&.-]{2,19})\s+(\S.{2,})$/)
+          : null;
+        if (inraRow && /\d/.test(inraRow[1])) {
+          reference = inraRow[1].replace(/\s/g, "");
+          brand = inraRow[2];
+          prefix = inraRow[3];
+        } else if (brandColumn) {
           const b = prefix.match(/^([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9.&-]{2,19})\s+(\S.{2,})$/);
           if (b && !/^(?:TOMA|BASE|CABLE|CINTA|TUBO|CAJA|CLAVIJA|TERMINAL|REGLETA|FUENTE)$/.test(b[1])) {
             brand = b[1];
@@ -703,7 +715,8 @@ export function parseOcr(
     });
   }
   if (grid) {
-    const g = gridLines(grid, result.net);
+    let g = gridLines(grid, raeeAmount && result.net ? cents(dec(result.net).minus(raeeAmount)) : result.net);
+    if (raeeAmount && !g.matched) g = gridLines(grid, result.net);
     if (g.lines.length) {
       result.lines = g.lines.map((l) => ({ ...l, family: productFamily(l.description) }));
       result.warnings.push(
@@ -735,6 +748,13 @@ export function parseOcr(
       }
     }
   }
+  // La tasa RAEE impresa aparte se propone como concepto económico, solo si con ella las líneas suman exactamente la base.
+  if (
+    raeeAmount && dec(raeeAmount).gt(0) && result.net && result.lines.length &&
+    result.lines.every((l) => l.price !== "") &&
+    sum(result.lines.map((l) => documentLineNet(l.quantity, l.price, l.discount))).plus(raeeAmount).eq(result.net)
+  )
+    result.lines.push({ description: "Tasa RAEE", reference: "", quantity: "1", unit: "ud", price: cents(raeeAmount), discount: "0", family: "Sin clasificar", financial: true });
   // Una cifra mal leída en un precio puede cuadrar con su propio importe y descuadrar la base: se intenta corregir con la base impresa.
   if (result.net && result.lines.length && result.lines.every((l) => l.price !== "")) {
     const fix = repairByBase(result.lines, result.net);
