@@ -554,3 +554,5 @@ input[type=range]{padding:0;border:0;box-shadow:none;margin:8px 0}
 .mat-sale{font-size:15px;color:#0b5f58}.mat-cost{font-size:13px;color:#334155}.mat-stock{font-size:13px;font-weight:600;color:#166534}.mat-stock.none{color:#b91c1c}
 .mat-actions{position:absolute;top:50%;right:8px;transform:translateY(-50%);display:flex;gap:2px}.mat-actions .mat-edit{position:static;transform:none;cursor:pointer}
 @media(max-width:760px){.mat-card.has-edit{padding-right:104px}.mat-actions .mat-edit{width:44px;height:44px}}
+.sc-thumb{flex:none;display:grid;place-items:center;width:56px;height:56px;border-radius:10px;background:#f1f5f4;border:1px solid #d5dedb;color:#7a8f8a;overflow:hidden}.sc-thumb img{width:100%;height:100%;object-fit:contain;background:#fff}
+@media(max-width:760px){.sc-thumb{width:64px;height:64px}}

@@ -1003,6 +1003,15 @@ export async function inventoryState(u: Actor) {
     },
     orderBy: { createdAt: "desc" },
   });
+  // Sin foto propia, se usa la del catálogo con la misma referencia.
+  const refs = [...new Set(lots.filter((l) => !l.imageUrl && l.reference).map((l) => l.reference))];
+  const catalogImages = new Map<string, string>();
+  if (refs.length)
+    for (const c of await db.catalogItem.findMany({
+      where: { companyId: u.companyId, imageUrl: { not: "" }, OR: [{ reference: { in: refs } }, { supplierRef: { in: refs } }] },
+      select: { reference: true, supplierRef: true, imageUrl: true },
+    }))
+      for (const r of [c.reference, c.supplierRef]) if (r && !catalogImages.has(r)) catalogImages.set(r, c.imageUrl);
   return {
     lots: lots.map((l) => {
       const canSeeJob = (j: { workerId: string | null } | null) =>
@@ -1013,6 +1022,7 @@ export async function inventoryState(u: Actor) {
         description: l.description,
         alias: l.alias,
         archivedAt: l.archivedAt,
+        imageUrl: l.imageUrl || catalogImages.get(l.reference) || "",
         reference: l.reference,
         brand: l.brand,
         model: l.model,

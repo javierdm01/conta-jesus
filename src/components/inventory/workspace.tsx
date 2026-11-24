@@ -865,6 +865,14 @@ export default function InventoryWorkspace({
                       checked={!!selected[l.code]}
                       onChange={(e) => setSelected({ ...selected, [l.code]: e.target.checked })}
                     />
+                    <Link prefetch href={lotHref(l.code)} className="sc-thumb" tabIndex={-1} aria-hidden>
+                      {l.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={l.imageUrl} alt="" loading="lazy" onError={(e) => (e.currentTarget.style.display = "none")} />
+                      ) : (
+                        <Boxes size={22} />
+                      )}
+                    </Link>
                     <Link prefetch href={lotHref(l.code)} className="sc-title" title={l.alias ? `${l.alias} · ${l.description}` : l.description}>
                       {l.alias || l.description}
                     </Link>
