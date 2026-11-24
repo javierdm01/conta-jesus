@@ -34,7 +34,7 @@ export function MaterialPicker({
   canEdit,
   catalog,
 }: {
-  jobs: { id: string; number: string; name: string }[];
+  jobs: { id: string; number: string; name: string; customer: { name: string } }[];
   jobId?: string;
   close: () => void;
   saved: () => Promise<void>;
@@ -124,7 +124,7 @@ export function MaterialPicker({
           Trabajo
           <select value={job} onChange={(e) => setJob(e.target.value)}>
             {jobs.map((j) => (
-              <option key={j.id} value={j.id}>{j.number} · {j.name}</option>
+              <option key={j.id} value={j.id}>{j.number} · {j.customer.name} · {j.name}</option>
             ))}
           </select>
         </label>

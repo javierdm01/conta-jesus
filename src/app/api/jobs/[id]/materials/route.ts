@@ -15,7 +15,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const [moves, billed, manual] = await Promise.all([
       db.stockMovement.findMany({
         where: { companyId: u.companyId, jobId: id, kind: { in: ["USE", "RETURN"] } },
-        include: { lot: { select: { id: true, alias: true, description: true, unit: true, reference: true } } },
+        include: { lot: { select: { id: true, alias: true, description: true, unit: true, reference: true, salePrice: true } } },
       }),
       db.saleLine.findMany({ where: { sale: { jobId: id, companyId: u.companyId }, OR: [{ lotId: { not: null } }, { costId: { not: null } }] } }),
       // Material apuntado a mano (sin almacén): se factura entero una sola vez.
@@ -35,7 +35,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const pending = x.qty.minus(done);
       if (pending.lte(0)) return [];
       // Precio unitario sugerido: coste medio de lo gastado + margen de la empresa.
-      const price = x.qty.gt(0) && x.cost.gt(0) ? cents(x.cost.div(x.qty).mul(markup)) : "0.00";
+      const suggested = x.qty.gt(0) && x.cost.gt(0) ? x.cost.div(x.qty).mul(markup) : dec(0);
+      // Si ya se facturó a otro precio, ese último precio manda (salvo que coste + margen sea mayor).
+      const last = x.lot.salePrice ? dec(x.lot.salePrice.toString()) : dec(0);
+      const price = cents(last.gt(suggested) ? last : suggested);
       return [{
         lotId,
         description: x.lot.alias || x.lot.description,

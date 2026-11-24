@@ -25,6 +25,7 @@ export async function GET(req: Request) {
         onHand: true,
         received: true,
         totalValue: true,
+        salePrice: true,
         document: {
           select: { number: true, supplier: { select: { name: true } } },
         },
@@ -69,6 +70,7 @@ export async function GET(req: Request) {
                   recommendedPrice: recommendedPrice(
                     l.totalValue?.toString(),
                     l.received.toString(),
+                    l.salePrice?.toString(),
                   ),
                 }
               : {}),

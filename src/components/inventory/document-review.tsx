@@ -743,7 +743,7 @@ export default function StockDocumentReview({
                     <option value="">Selecciona el trabajo</option>
                     {s.jobs.map((j) => (
                       <option key={j.id} value={j.id}>
-                        {j.number} · {j.name}
+                        {j.number} · {j.customer.name} · {j.name}
                       </option>
                     ))}
                   </select>
@@ -770,7 +770,7 @@ export default function StockDocumentReview({
                             <option value="">Stock libre, sin reservar</option>
                             {s.jobs.map((j) => (
                               <option key={j.id} value={j.id}>
-                                {j.number} · {j.name}
+                                {j.number} · {j.customer.name} · {j.name}
                               </option>
                             ))}
                           </select>

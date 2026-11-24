@@ -1139,7 +1139,7 @@ function MovementForm({
                   )
                   .map((j) => (
                     <option key={j.id} value={j.id}>
-                      {j.number} · {j.name}
+                      {j.number} · {j.customer.name} · {j.name}
                     </option>
                   ))}
               </select>

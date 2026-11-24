@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchesSearch, recommendedPrice } from "../src/lib/product-search";
+import { matchesSearch, recommendedPrice, savedSalePrice } from "../src/lib/product-search";
 test("buscar combina alias, nombre y referencia sin depender de acentos, orden o separadores", () => {
   const fields = [
     "Enchufe salón",
@@ -28,4 +28,10 @@ test("recomendación añade un 30 % al coste real por unidad, con redondeo monet
   assert.equal(recommendedPrice("0", "1"), "0.00");
   assert.equal(recommendedPrice(null, "20"), null);
   assert.equal(recommendedPrice("20", "0"), null);
+});
+
+test("el último precio de venta no baja de compra + 30 %", () => {
+  assert.equal(savedSalePrice("200", "20", "20"), "20.00");
+  assert.equal(savedSalePrice("200", "20", "10"), "13.00");
+  assert.equal(recommendedPrice("200", "20", "20"), "20.00");
 });

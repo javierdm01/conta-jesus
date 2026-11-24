@@ -1039,6 +1039,7 @@ export async function inventoryState(u: Actor) {
               recommendedPrice: recommendedPrice(
                 l.totalValue?.toString(),
                 l.received.toString(),
+                l.salePrice?.toString(),
               ),
               remainingValue: l.remainingValue?.toString() ?? null,
               document: l.document,

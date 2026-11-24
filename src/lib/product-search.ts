@@ -31,7 +31,15 @@ export function purchasePrice(totalValue: string | null | undefined, received: s
 export function recommendedPrice(
   totalValue: string | null | undefined,
   received: string,
+  lastSale?: string | null,
 ) {
-  if (totalValue == null || dec(received).lte(0)) return null;
-  return cents(dec(totalValue).div(received).mul("1.30"));
+  if (totalValue == null || dec(received).lte(0)) return lastSale ? cents(lastSale) : null;
+  return cents(maxPrice(dec(totalValue).div(received).mul("1.30"), lastSale));
+}
+const maxPrice = (floor: ReturnType<typeof dec>, lastSale?: string | null) =>
+  lastSale && dec(lastSale).gt(floor) ? dec(lastSale) : floor;
+/** Precio de venta a guardar tras facturar: el puesto, salvo que compra + 30 % sea mayor. */
+export function savedSalePrice(totalValue: string | null | undefined, received: string, entered: string) {
+  const floor = totalValue == null || dec(received).lte(0) ? dec(0) : dec(totalValue).div(received).mul("1.30");
+  return cents(maxPrice(floor, entered));
 }

@@ -24,9 +24,15 @@ const net = (l: InvLine) => {
   }
 };
 const HOURS_DESC = "Mano de obra";
-/** Una línea con las horas facturables del trabajo. shortcut: precio sugerido = coste medio/hora + 30 % (como el material), editable; sin horas facturadas antes no hay forma de saber cuáles ya se cobraron. */
-const hoursLine = (j?: Job, rate?: string): InvLine | null => {
-  const h = (j?.hours ?? []).filter((x) => x.billable !== false).reduce((a, x) => a.plus(x.hours), dec(0));
+// Las horas ya cobradas no se guardan aparte: se reconocen en facturas anteriores como líneas manuales de mano de obra / instalación.
+// shortcut: una línea «Instalación» a tanto alzado en «ud» cuenta como 1 h; sube a un vínculo real hora↔línea si molesta.
+const billedHours = (j?: Job, skipSaleId?: string) =>
+  (j?.sales ?? []).filter((s) => s.id !== skipSaleId).flatMap((s) => s.lines ?? [])
+    .filter((l) => !l.lotId && !l.costId && (/^(h|hora|horas)$/i.test(l.unit.trim()) || /instalaci|mano de obra/i.test(l.description)))
+    .reduce((a, l) => a.plus(l.quantity), dec(0));
+/** Una línea con las horas facturables aún sin cobrar del trabajo. shortcut: precio sugerido = coste medio/hora + 30 % (como el material), editable. */
+const hoursLine = (j?: Job, rate?: string, skipSaleId?: string): InvLine | null => {
+  const h = (j?.hours ?? []).filter((x) => x.billable !== false).reduce((a, x) => a.plus(x.hours), dec(0)).minus(billedHours(j, skipSaleId));
   if (h.lte(0)) return null;
   const m = j?.metrics;
   const price = Number(rate) > 0 ? cents(rate!) : m && Number(m.hours) > 0 ? cents(dec(m.labor).div(m.hours).mul("1.30")) : "0.00";
@@ -137,8 +143,8 @@ export default function InvoicePage({
     }
   };
   const addHours = () => {
-    const l = hoursLine(current, [customers.find((c) => c.id === customerId)?.hourlyRate, defaultRate].find((r) => Number(r) > 0));
-    if (!l) return setInfo("No hay horas facturables en el trabajo.");
+    const l = hoursLine(current, [customers.find((c) => c.id === customerId)?.hourlyRate, defaultRate].find((r) => Number(r) > 0), editing?.id);
+    if (!l) return setInfo("No hay horas pendientes de facturar en el trabajo.");
     setLines((cur) => {
       const at = cur.findIndex((x) => x.description === HOURS_DESC);
       if (at < 0) return [...cur, l];
@@ -147,7 +153,7 @@ export default function InvoicePage({
       return next;
     });
   };
-  // Al facturar desde un trabajo se cargan sus materiales y horas. Las horas solo si aún no hay facturas: no se registra cuáles se cobraron.
+  // Al facturar desde un trabajo se cargan su material y sus horas pendientes (descontando las ya facturadas).
   useEffect(() => {
     if (!startJob || editing) return;
     // Facturar desde un presupuesto aprobado: se cargan sus líneas tal cual.
@@ -158,7 +164,7 @@ export default function InvoicePage({
       return;
     }
     void loadMaterials();
-    if (!startJob.sales.length) addHours();
+    addHours();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const quoteLines = (id: string) => {

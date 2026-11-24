@@ -568,7 +568,7 @@ export function Dashboard({
     select(
       "jobId",
       "Trabajo",
-      activeJobs.map((j) => ({ value: j.id, label: `${j.number} · ${j.name}` })),
+      activeJobs.map((j) => ({ value: j.id, label: `${j.number} · ${j.customer.name} · ${j.name}` })),
       selected && !selected.archivedAt ? selected.id : undefined,
     );
   const createJob = () =>
@@ -3280,6 +3280,7 @@ function OperationForm({
   customers: Customer[];
   workers: Worker[];
 }) {
+  const router = useRouter();
   const [values, setValues] = useState<Record<string, string>>(() =>
       Object.fromEntries(
         modal.fields.map((f) => [
@@ -3375,11 +3376,16 @@ function OperationForm({
                 delete payload[f.name];
             if ("billable" in payload)
               payload.billable = payload.billable === "true";
-            await request(`/api/operations/${modal.action}`, payload);
+            const result = await request(`/api/operations/${modal.action}`, payload);
             // Las fotos se suben ya reducidas; si alguna falla, el parte ya está guardado.
             for (const f of photos)
               await uploadDocument(f, { kind: "PHOTO", jobId: String(values.jobId ?? "") }).catch(() => {});
             await saved();
+            // Un trabajo recién creado se abre directamente.
+            if (modal.action === "job") {
+              const customer = customers.find((c) => c.id === result.customerId);
+              if (customer) router.push(jobPath({ id: result.id, name: result.name, customer }));
+            }
           } catch (e) {
             setError((e as Error).message);
           } finally {
@@ -3650,7 +3656,7 @@ function UploadForm({
               <option value="">Selecciona el trabajo</option>
               {jobs.map((j) => (
                 <option key={j.id} value={j.id}>
-                  {j.number} · {j.name}
+                  {j.number} · {j.customer.name} · {j.name}
                 </option>
               ))}
             </select>
@@ -3694,7 +3700,7 @@ function UploadForm({
                 </option>
                 {jobs.map((j) => (
                   <option key={j.id} value={j.id}>
-                    {j.number} · {j.name}
+                    {j.number} · {j.customer.name} · {j.name}
                   </option>
                 ))}
               </select>

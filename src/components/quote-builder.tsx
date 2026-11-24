@@ -136,7 +136,7 @@ export function QuoteBuilder({
           Trabajo
           <select value={job} disabled={!!jobId} onChange={(e) => setJob(e.target.value)}>
             {jobs.map((j) => (
-              <option key={j.id} value={j.id}>{j.number} · {j.name}</option>
+              <option key={j.id} value={j.id}>{j.number} · {j.customer.name} · {j.name}</option>
             ))}
           </select>
         </label>

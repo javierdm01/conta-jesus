@@ -364,6 +364,8 @@ model StockLot {
   location          String             @default("")
   notes             String             @default("")
   minimum           Decimal            @default(0) @db.Decimal(14, 4)
+  // Último precio de venta unitario usado (nunca por debajo de compra + 30 %); sustituye al recomendado calculado.
+  salePrice         Decimal?           @db.Decimal(14, 4)
   createdAt         DateTime           @default(now())
   lines             DocumentLine[]
   movements         StockMovement[]

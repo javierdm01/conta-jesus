@@ -8,6 +8,7 @@ import { admin, accessibleJob, AppError, type Actor } from "./access";
 import * as v from "./validation";
 import { cents, dec, lineNet, documentLineNet, quotePrice, sum } from "./money";
 import { quantityForUnit } from "./inventory-math";
+import { savedSalePrice } from "./product-search";
 import { inventoryOperation } from "./inventory";
 import { purchaseOrderOperation } from "./purchase-orders";
 import { userOperation } from "./users";
@@ -409,7 +410,7 @@ export async function operate(u: Actor, action: string, input: unknown) {
         }
         const lot = await tx.stockLot.findFirst({
           where: { id: l.lotId, companyId, archivedAt: null },
-          select: { unit: true },
+          select: { unit: true, totalValue: true, received: true },
         });
         if (!lot)
           throw new AppError("Uno de los artículos no está disponible.", 404);
@@ -418,6 +419,11 @@ export async function operate(u: Actor, action: string, input: unknown) {
         } catch (e) {
           throw new AppError((e as Error).message);
         }
+        // El precio puesto queda como último precio de venta del artículo (nunca bajo compra + 30 %).
+        await tx.stockLot.update({
+          where: { id: l.lotId },
+          data: { salePrice: savedSalePrice(lot.totalValue?.toString(), lot.received.toString(), l.price) },
+        });
         saleLines.push({
           ...l,
           unit: lot.unit,
